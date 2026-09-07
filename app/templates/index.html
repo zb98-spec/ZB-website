@@ -5,14 +5,14 @@
   <h1>Welcome back{% if current_user.name %}, {{ current_user.name }}{% endif %}</h1>
   <p class="muted">Here's everything you've got running in one place.</p>
 
-  <div class="grid">
+  <ul class="project-list">
     {% for project in projects %}
-      <a class="card" href="{{ url_for(project.endpoint) }}">
-        <h2>{{ project.name }}</h2>
+      <li>
+        <a href="{{ url_for(project.endpoint) }}">{{ project.name }}</a>
         <p class="muted">{{ project.description }}</p>
-      </a>
+      </li>
     {% endfor %}
-  </div>
+  </ul>
 {% else %}
   <section class="hero">
     <h1>One place for everything you build.</h1>

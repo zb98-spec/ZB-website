@@ -35,11 +35,13 @@ migrations/       Alembic migrations (flask db migrate/upgrade)
 - `/wines` — **Wine Library**: add, edit, delete, and list every bottle in
   your cellar (name, producer, vintage, type, varietal, region, quantity,
   purchase price, rating, drinking window, notes). Each user only sees
-  their own wines.
-- `/wines/<id>` — a wine's detail page and **tasting log**: record a
-  tasting (date, your rating for that tasting, notes), with an optional
-  "opened a bottle" checkbox that decrements the wine's cellar quantity by
-  one. Past tastings are listed newest-first.
+  their own wines. Each row has a **Log tasting** button.
+- `/wines/<id>` — a wine's detail page: cellar info plus its tasting
+  history, newest-first.
+- `/wines/<id>/tastings/new` — log a tasting: date and score (1-100) are
+  required; occasion, people, and notes are optional. Optionally
+  decrements the wine's cellar quantity by one (checked by default, since
+  logging a tasting usually means a bottle got opened).
 
 ## 1. Local setup
 

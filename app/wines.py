@@ -102,13 +102,25 @@ def delete_wine(wine_id):
 @login_required
 def wine_detail(wine_id):
     wine = _get_owned_wine(wine_id)
-    return render_template("wines/detail.html", wine=wine, today=date.today().isoformat())
+    return render_template("wines/detail.html", wine=wine)
+
+
+@wines_bp.route("/<int:wine_id>/tastings/new")
+@login_required
+def new_tasting(wine_id):
+    wine = _get_owned_wine(wine_id)
+    return render_template("wines/tasting_form.html", wine=wine, today=date.today().isoformat())
 
 
 @wines_bp.route("/<int:wine_id>/tastings", methods=["POST"])
 @login_required
 def add_tasting(wine_id):
     wine = _get_owned_wine(wine_id)
+
+    score = _optional_int(request.form, "score")
+    if score is None:
+        flash("Score is required to log a tasting.")
+        return redirect(url_for("wines.new_tasting", wine_id=wine.id))
 
     tasted_on_raw = request.form.get("tasted_on", "").strip()
     try:
@@ -120,7 +132,9 @@ def add_tasting(wine_id):
         TastingNote(
             wine_id=wine.id,
             tasted_on=tasted_on,
-            rating=_optional_int(request.form, "rating"),
+            score=score,
+            occasion=request.form.get("occasion", "").strip() or None,
+            people=request.form.get("people", "").strip() or None,
             notes=request.form.get("notes", "").strip() or None,
         )
     )

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Log a tasting</h1>
+<p class="muted">{{ wine.name }}{% if wine.vintage %} &middot; {{ wine.vintage }}{% endif %}</p>
+
+<form method="post" action="{{ url_for('wines.add_tasting', wine_id=wine.id) }}" class="wine-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <div class="form-row">
+    <label>Date*
+      <input type="date" name="tasted_on" value="{{ today }}" required>
+    </label>
+    <label>Score (1-100)*
+      <input type="number" name="score" min="1" max="100" required>
+    </label>
+  </div>
+
+  <label>Occasion
+    <input type="text" name="occasion" placeholder="e.g. anniversary dinner">
+  </label>
+
+  <label>People
+    <input type="text" name="people" placeholder="e.g. Sarah, John">
+  </label>
+
+  <label>Notes
+    <textarea name="notes" rows="3" placeholder="Nose, palate, thoughts..."></textarea>
+  </label>
+
+  <label class="checkbox-row">
+    <input type="checkbox" name="decrement_quantity" checked>
+    Opened a bottle (subtract 1 from quantity)
+  </label>
+
+  <div class="form-actions">
+    <a class="btn btn-ghost" href="{{ url_for('wines.wine_detail', wine_id=wine.id) }}">Cancel</a>
+    <button type="submit" class="btn btn-primary">Log tasting</button>
+  </div>
+</form>
+{% endblock %}

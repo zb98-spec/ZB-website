@@ -82,7 +82,9 @@ def test_tasting_log_decrements_quantity_and_lists_history():
         f"/wines/{wine_id}/tastings",
         data={
             "tasted_on": "2026-01-15",
-            "rating": "92",
+            "score": "92",
+            "occasion": "Anniversary dinner",
+            "people": "Sarah, John",
             "notes": "Bright citrus, great with oysters.",
             "decrement_quantity": "on",
         },
@@ -91,12 +93,39 @@ def test_tasting_log_decrements_quantity_and_lists_history():
     assert resp.status_code == 200
     assert b"Tasting logged" in resp.data
     assert b"92" in resp.data
+    assert b"Anniversary dinner" in resp.data
+    assert b"Sarah, John" in resp.data
     assert b"Bright citrus" in resp.data
     assert b"No tastings logged yet" not in resp.data
 
     with app.app_context():
         wine = db.session.get(Wine, wine_id)
         assert wine.quantity == 2  # dropped from 3
+
+
+def test_tasting_requires_score():
+    app = _app()
+    client = _logged_in_client(app)
+
+    client.post(
+        "/wines/new",
+        data={"name": "Ridge Zinfandel", "quantity": "1"},
+        follow_redirects=True,
+    )
+    wine_id = _wine_id(app, "Ridge Zinfandel")
+
+    resp = client.post(
+        f"/wines/{wine_id}/tastings",
+        data={"tasted_on": "2026-01-15"},
+        follow_redirects=True,
+    )
+    assert resp.status_code == 200
+    assert b"Score is required" in resp.data
+
+    with app.app_context():
+        wine = db.session.get(Wine, wine_id)
+        assert len(wine.tastings) == 0
+        assert wine.quantity == 1  # unchanged - nothing was logged
 
 
 def test_wine_detail_requires_ownership():

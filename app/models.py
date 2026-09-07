@@ -72,7 +72,9 @@ class TastingNote(db.Model):
     wine_id = db.Column(db.Integer, db.ForeignKey("wine.id"), nullable=False)
 
     tasted_on = db.Column(db.Date, nullable=False)
-    rating = db.Column(db.Integer)  # 1-100, this tasting only (may differ from Wine.rating)
+    score = db.Column(db.Integer, nullable=False)  # 1-100, this tasting only (may differ from Wine.rating)
+    occasion = db.Column(db.String(255))
+    people = db.Column(db.String(255))
     notes = db.Column(db.Text)
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)

@@ -18,41 +18,24 @@
   {%- if wine.rating %} &middot; {{ wine.rating }}/100{% endif %}
 </p>
 
-<h2>Log a tasting</h2>
-<form method="post" action="{{ url_for('wines.add_tasting', wine_id=wine.id) }}" class="wine-form">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <div class="form-row">
-    <label>Date
-      <input type="date" name="tasted_on" value="{{ today }}">
-    </label>
-    <label>Rating (1-100)
-      <input type="number" min="1" max="100" name="rating">
-    </label>
-  </div>
-  <label>Notes
-    <textarea name="notes" rows="3" placeholder="Nose, palate, food pairing, thoughts..."></textarea>
-  </label>
-  <label class="checkbox-row">
-    <input type="checkbox" name="decrement_quantity" checked>
-    Opened a bottle (subtract 1 from quantity)
-  </label>
-  <div class="form-actions">
-    <button type="submit" class="btn btn-primary">Log tasting</button>
-  </div>
-</form>
+<div class="page-header">
+  <h2>Tasting history</h2>
+  <a class="btn btn-primary" href="{{ url_for('wines.new_tasting', wine_id=wine.id) }}">+ Log tasting</a>
+</div>
 
-<h2>Tasting history</h2>
 {% if wine.tastings %}
   <div class="table-wrap">
     <table class="wine-table">
       <thead>
-        <tr><th>Date</th><th>Rating</th><th>Notes</th><th></th></tr>
+        <tr><th>Date</th><th>Score</th><th>Occasion</th><th>People</th><th>Notes</th><th></th></tr>
       </thead>
       <tbody>
         {% for tasting in wine.tastings %}
         <tr>
           <td>{{ tasting.tasted_on.strftime("%b %-d, %Y") }}</td>
-          <td>{{ tasting.rating or "—" }}</td>
+          <td>{{ tasting.score }}</td>
+          <td>{{ tasting.occasion or "—" }}</td>
+          <td>{{ tasting.people or "—" }}</td>
           <td>{{ tasting.notes or "—" }}</td>
           <td class="actions">
             <form action="{{ url_for('wines.delete_tasting', wine_id=wine.id, tasting_id=tasting.id) }}" method="post" class="inline-form"

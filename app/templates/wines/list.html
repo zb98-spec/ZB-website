@@ -41,6 +41,7 @@
             {% endif %}
           </td>
           <td class="actions">
+            <a class="btn btn-primary btn-sm" href="{{ url_for('wines.new_tasting', wine_id=wine.id) }}">Log tasting</a>
             <a href="{{ url_for('wines.edit_wine', wine_id=wine.id) }}">Edit</a>
             <form action="{{ url_for('wines.delete_wine', wine_id=wine.id) }}" method="post" class="inline-form"
                   onsubmit="return confirm('Remove this wine from your cellar?');">
