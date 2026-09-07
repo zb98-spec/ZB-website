@@ -1,10 +1,11 @@
 # ZB Hub
 
 A simple, central hub/landing page for personal projects, with account
-creation via Google or Apple sign-in.
+creation via username/password, or Google/Apple sign-in.
 
 - **Framework**: Flask (app factory + blueprints), server-rendered Jinja templates
-- **Auth**: [Authlib](https://authlib.org) OAuth client with Google and Apple providers, sessions via Flask-Login
+- **Auth**: username/password (Werkzeug password hashing, Flask-Login sessions)
+  plus optional [Authlib](https://authlib.org) OAuth with Google and Apple
 - **Database**: PostgreSQL via Flask-SQLAlchemy + Flask-Migrate (Alembic)
 - **Containerized**: Docker + docker-compose for local dev
 - **Deploy target**: Google Cloud Run
@@ -16,7 +17,7 @@ app/
   __init__.py     app factory, wires up extensions and blueprints
   extensions.py   db, migrate, login_manager, csrf singletons
   models.py       User, OAuthAccount, Wine, TastingNote
-  auth.py         /login, OAuth redirect + callback, /logout
+  auth.py         /login, /register, OAuth redirect + callback, /logout
   main.py         welcome page / hub dashboard
   wines.py        Wine Library CRUD + tasting log (first project on the hub)
   templates/
@@ -29,9 +30,13 @@ migrations/       Alembic migrations (flask db migrate/upgrade)
 
 - `/` — welcome page. Signed out: hero + "Get started". Signed in: a
   dashboard of hub projects — currently just "Wine Library".
-- `/login` — account creation / sign-in page with "Continue with Google"
-  and "Continue with Apple" buttons. There's no separate sign-up form —
-  the first OAuth sign-in creates the account automatically.
+- `/login` — sign-in page: a username/password form (works out of the box,
+  no setup needed) plus "Continue with Google"/"Continue with Apple"
+  buttons, shown disabled until those are configured (see §3 and §4).
+- `/register` — create an account with a username and password. Usernames
+  are 3-80 characters (letters, numbers, `_ . -`) and must be unique;
+  passwords need to be at least 8 characters. Registering logs you in
+  immediately — there's no email verification step.
 - `/wines` — **Wine Library**: add, edit, delete, and list every bottle in
   your cellar (name, producer, vintage, type, varietal, region, quantity,
   purchase price, rating, drinking window, notes). Each user only sees

@@ -3,8 +3,21 @@
 {% block content %}
 <div class="auth-card">
   <h1>Welcome to ZB Hub</h1>
-  <p class="muted">Sign in or create an account to get to your projects.</p>
+  <p class="muted">Sign in to get to your projects.</p>
 
+  <form method="post" action="{{ url_for('auth.login_password') }}" class="wine-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Username
+      <input type="text" name="username" required autofocus>
+    </label>
+    <label>Password
+      <input type="password" name="password" required>
+    </label>
+    <button type="submit" class="btn btn-primary">Sign in</button>
+  </form>
+  <p class="muted">New here? <a href="{{ url_for('auth.register') }}">Create an account</a></p>
+
+  <p class="muted" style="margin-top: 1.5rem;">Or continue with</p>
   <div class="auth-buttons">
     {% if google_enabled %}
       <a class="btn" href="{{ url_for('auth.login_redirect', provider='google') }}">Continue with Google</a>
@@ -22,10 +35,5 @@
       </button>
     {% endif %}
   </div>
-
-  <p class="fine-print">
-    By continuing you agree to the terms for this hub. No password needed &mdash;
-    your account is created automatically on first sign-in.
-  </p>
 </div>
 {% endblock %}

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 
 from authlib.integrations.base_client import OAuthError
@@ -13,6 +14,8 @@ from .models import OAuthAccount, User
 
 auth_bp = Blueprint("auth", __name__)
 oauth = OAuth()
+
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,80}$")
 
 
 def _generate_apple_client_secret() -> str:
@@ -65,6 +68,51 @@ def login_page():
         google_enabled=oauth.create_client("google") is not None,
         apple_enabled=oauth.create_client("apple") is not None,
     )
+
+
+@auth_bp.route("/register", methods=["GET", "POST"])
+def register():
+    if current_user.is_authenticated:
+        return redirect(url_for("main.index"))
+
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        if not USERNAME_RE.match(username):
+            flash("Username must be 3-80 characters: letters, numbers, _ . -")
+        elif len(password) < 8:
+            flash("Password must be at least 8 characters.")
+        elif password != confirm_password:
+            flash("Passwords don't match.")
+        elif User.query.filter_by(username=username).first() is not None:
+            flash("That username is already taken.")
+        else:
+            user = User(username=username)
+            user.set_password(password)
+            db.session.add(user)
+            db.session.commit()
+            login_user(user)
+            return redirect(url_for("main.index"))
+
+        return render_template("register.html", username=username)
+
+    return render_template("register.html", username="")
+
+
+@auth_bp.route("/login/password", methods=["POST"])
+def login_password():
+    username = request.form.get("username", "").strip()
+    password = request.form.get("password", "")
+
+    user = User.query.filter_by(username=username).first()
+    if user is None or not user.check_password(password):
+        flash("Incorrect username or password.")
+        return redirect(url_for("auth.login_page"))
+
+    login_user(user)
+    return redirect(url_for("main.index"))
 
 
 @auth_bp.route("/login/<provider>")
