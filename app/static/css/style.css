@@ -250,6 +250,16 @@ a {
   gap: 0.85rem;
 }
 
+.checkbox-row {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.5rem !important;
+}
+
+.checkbox-row input {
+  width: auto;
+}
+
 .wine-form input,
 .wine-form select,
 .wine-form textarea {

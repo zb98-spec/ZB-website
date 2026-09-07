@@ -25,7 +25,7 @@
         {% for wine in wines %}
         <tr>
           <td>
-            <strong>{{ wine.name }}</strong>
+            <a href="{{ url_for('wines.wine_detail', wine_id=wine.id) }}"><strong>{{ wine.name }}</strong></a>
             {% if wine.producer %}<br><span class="muted">{{ wine.producer }}</span>{% endif %}
           </td>
           <td>{{ wine.vintage or "NV" }}</td>

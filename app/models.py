@@ -55,3 +55,24 @@ class Wine(db.Model):
     notes = db.Column(db.Text)
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    tastings = db.relationship(
+        "TastingNote",
+        backref="wine",
+        lazy=True,
+        cascade="all, delete-orphan",
+        order_by="desc(TastingNote.tasted_on)",
+    )
+
+
+class TastingNote(db.Model):
+    __tablename__ = "tasting_note"
+
+    id = db.Column(db.Integer, primary_key=True)
+    wine_id = db.Column(db.Integer, db.ForeignKey("wine.id"), nullable=False)
+
+    tasted_on = db.Column(db.Date, nullable=False)
+    rating = db.Column(db.Integer)  # 1-100, this tasting only (may differ from Wine.rating)
+    notes = db.Column(db.Text)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)

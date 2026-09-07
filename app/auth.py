@@ -1,6 +1,8 @@
+import json
 import os
 import time
 
+from authlib.integrations.base_client import OAuthError
 from authlib.integrations.flask_client import OAuth
 from authlib.jose import jwt as jose_jwt
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
@@ -83,14 +85,33 @@ def callback(provider):
     if client is None:
         abort(404)
 
-    token = client.authorize_access_token()
+    try:
+        token = client.authorize_access_token()
+    except OAuthError:
+        flash(f"{provider.title()} sign-in was cancelled or failed. Please try again.")
+        return redirect(url_for("auth.login_page"))
+
     userinfo = token.get("userinfo")
     if userinfo is None:
-        abort(400, "Provider did not return user info.")
+        flash(f"{provider.title()} didn't return account info. Please try again.")
+        return redirect(url_for("auth.login_page"))
 
     provider_user_id = userinfo["sub"]
     email = userinfo.get("email")
-    name = userinfo.get("name") or (email.split("@")[0] if email else None)
+    name = userinfo.get("name")
+
+    # Apple never puts a name in the id token - it's only sent, once, as a
+    # separate form field on the very first authorization.
+    if provider == "apple" and not name and request.form.get("user"):
+        try:
+            apple_name = json.loads(request.form["user"]).get("name", {})
+        except (TypeError, ValueError):
+            apple_name = {}
+        name = " ".join(
+            filter(None, [apple_name.get("firstName"), apple_name.get("lastName")])
+        ) or None
+
+    name = name or (email.split("@")[0] if email else None)
 
     account = OAuthAccount.query.filter_by(
         provider=provider, provider_user_id=provider_user_id

@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ wine.name }}</h1>
+    <p class="muted">
+      {% if wine.producer %}{{ wine.producer }} &middot; {% endif %}{{ wine.vintage or "NV" }}
+      {%- if wine.region %} &middot; {{ wine.region }}{% if wine.country %}, {{ wine.country }}{% endif %}{% endif %}
+    </p>
+  </div>
+  <a class="btn btn-ghost" href="{{ url_for('wines.edit_wine', wine_id=wine.id) }}">Edit wine</a>
+</div>
+
+<p class="muted">
+  {{ wine.quantity }} bottle{{ "s" if wine.quantity != 1 else "" }} in cellar
+  {%- if wine.wine_type %} &middot; {{ wine.wine_type }}{% endif %}
+  {%- if wine.rating %} &middot; {{ wine.rating }}/100{% endif %}
+</p>
+
+<h2>Log a tasting</h2>
+<form method="post" action="{{ url_for('wines.add_tasting', wine_id=wine.id) }}" class="wine-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="form-row">
+    <label>Date
+      <input type="date" name="tasted_on" value="{{ today }}">
+    </label>
+    <label>Rating (1-100)
+      <input type="number" min="1" max="100" name="rating">
+    </label>
+  </div>
+  <label>Notes
+    <textarea name="notes" rows="3" placeholder="Nose, palate, food pairing, thoughts..."></textarea>
+  </label>
+  <label class="checkbox-row">
+    <input type="checkbox" name="decrement_quantity" checked>
+    Opened a bottle (subtract 1 from quantity)
+  </label>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Log tasting</button>
+  </div>
+</form>
+
+<h2>Tasting history</h2>
+{% if wine.tastings %}
+  <div class="table-wrap">
+    <table class="wine-table">
+      <thead>
+        <tr><th>Date</th><th>Rating</th><th>Notes</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for tasting in wine.tastings %}
+        <tr>
+          <td>{{ tasting.tasted_on.strftime("%b %-d, %Y") }}</td>
+          <td>{{ tasting.rating or "—" }}</td>
+          <td>{{ tasting.notes or "—" }}</td>
+          <td class="actions">
+            <form action="{{ url_for('wines.delete_tasting', wine_id=wine.id, tasting_id=tasting.id) }}" method="post" class="inline-form"
+                  onsubmit="return confirm('Delete this tasting note?');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="link-btn">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="empty-state">
+    <p>No tastings logged yet.</p>
+  </div>
+{% endif %}
+{% endblock %}

@@ -1,10 +1,11 @@
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 
 from .extensions import db
-from .models import Wine
+from .models import TastingNote, Wine
 
 wines_bp = Blueprint("wines", __name__, url_prefix="/wines")
 
@@ -95,3 +96,49 @@ def delete_wine(wine_id):
     db.session.commit()
     flash("Wine removed from your cellar.")
     return redirect(url_for("wines.list_wines"))
+
+
+@wines_bp.route("/<int:wine_id>")
+@login_required
+def wine_detail(wine_id):
+    wine = _get_owned_wine(wine_id)
+    return render_template("wines/detail.html", wine=wine, today=date.today().isoformat())
+
+
+@wines_bp.route("/<int:wine_id>/tastings", methods=["POST"])
+@login_required
+def add_tasting(wine_id):
+    wine = _get_owned_wine(wine_id)
+
+    tasted_on_raw = request.form.get("tasted_on", "").strip()
+    try:
+        tasted_on = datetime.strptime(tasted_on_raw, "%Y-%m-%d").date()
+    except ValueError:
+        tasted_on = date.today()
+
+    db.session.add(
+        TastingNote(
+            wine_id=wine.id,
+            tasted_on=tasted_on,
+            rating=_optional_int(request.form, "rating"),
+            notes=request.form.get("notes", "").strip() or None,
+        )
+    )
+    if request.form.get("decrement_quantity") and wine.quantity > 0:
+        wine.quantity -= 1
+    db.session.commit()
+    flash("Tasting logged.")
+    return redirect(url_for("wines.wine_detail", wine_id=wine.id))
+
+
+@wines_bp.route("/<int:wine_id>/tastings/<int:tasting_id>/delete", methods=["POST"])
+@login_required
+def delete_tasting(wine_id, tasting_id):
+    wine = _get_owned_wine(wine_id)
+    tasting = db.session.get(TastingNote, tasting_id)
+    if tasting is None or tasting.wine_id != wine.id:
+        abort(404)
+    db.session.delete(tasting)
+    db.session.commit()
+    flash("Tasting note removed.")
+    return redirect(url_for("wines.wine_detail", wine_id=wine.id))

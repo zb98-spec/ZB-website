@@ -15,10 +15,10 @@ creation via Google or Apple sign-in.
 app/
   __init__.py     app factory, wires up extensions and blueprints
   extensions.py   db, migrate, login_manager, csrf singletons
-  models.py       User, OAuthAccount, Wine
+  models.py       User, OAuthAccount, Wine, TastingNote
   auth.py         /login, OAuth redirect + callback, /logout
   main.py         welcome page / hub dashboard
-  wines.py        Wine Library CRUD (first project on the hub)
+  wines.py        Wine Library CRUD + tasting log (first project on the hub)
   templates/
   static/css/
 wsgi.py           entrypoint (`app = create_app()`), used by gunicorn/flask run
@@ -36,6 +36,10 @@ migrations/       Alembic migrations (flask db migrate/upgrade)
   your cellar (name, producer, vintage, type, varietal, region, quantity,
   purchase price, rating, drinking window, notes). Each user only sees
   their own wines.
+- `/wines/<id>` — a wine's detail page and **tasting log**: record a
+  tasting (date, your rating for that tasting, notes), with an optional
+  "opened a bottle" checkbox that decrements the wine's cellar quantity by
+  one. Past tastings are listed newest-first.
 
 ## 1. Local setup
 
@@ -81,31 +85,61 @@ then run `flask db upgrade`.
 
 ## 3. Google OAuth setup
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/apis/credentials).
-2. Create an **OAuth client ID** (type: Web application).
-3. Authorized redirect URI:
-   - Local: `http://localhost:5000/login/google/callback`
-   - Production: `https://<your-domain>/login/google/callback`
-4. Copy the Client ID/Secret into `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
+This has to be done in your own Google account — there's no API for it, it's
+a few clicks in the console:
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+   (same project you used for Cloud Run/Neon, or a fresh one).
+2. If you haven't already, configure the **OAuth consent screen** first
+   (Console will prompt you): User type "External" is fine for personal use;
+   fill in an app name, your email as support/developer contact. Leave it in
+   "Testing" status — you don't need Google's review for personal use, you
+   just have to add your own Google account under **Test users** on that
+   screen, or sign-in will be rejected.
+3. Under **Credentials**, create an **OAuth client ID** (type: Web application).
+4. Authorized redirect URI — add both while developing:
+   - Local: `http://127.0.0.1:5000/login/google/callback`
+   - Production: `https://<your-cloud-run-url>/login/google/callback`
+5. Copy the Client ID/Secret into `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`
+   (in `.env` locally, and as the `google-client-id` / `google-client-secret`
+   Secret Manager secrets for Cloud Run — see §6).
+6. Restart the app (`flask run`) — the "Continue with Google" button on
+   `/login` goes from disabled to live as soon as both env vars are set;
+   nothing else in the code needs to change.
 
 ## 4. Sign in with Apple setup
 
-Requires an active [Apple Developer Program](https://developer.apple.com/programs/) membership ($99/yr).
+Also has to be done in your own account, and requires an active
+[Apple Developer Program](https://developer.apple.com/programs/) membership
+($99/yr) — there's no free tier for this one.
 
-1. Create an **App ID** with "Sign in with Apple" enabled.
-2. Create a **Services ID** — this is your `APPLE_CLIENT_ID`. Configure its
-   return URL: `https://<your-domain>/login/apple/callback` (Apple requires
-   HTTPS, so Apple login can only be tested against a deployed URL or a
-   tunnel like ngrok, not plain `localhost`).
-3. Create a **Sign in with Apple key** in the Apple Developer portal, note
-   its Key ID (`APPLE_KEY_ID`) and your Team ID (`APPLE_TEAM_ID`), and
-   download the `.p8` private key file — paste its contents into
-   `APPLE_PRIVATE_KEY`.
+1. In [Certificates, Identifiers & Profiles](https://developer.apple.com/account/resources/identifiers/list),
+   create an **App ID** (or use an existing one) with the "Sign in with
+   Apple" capability turned on.
+2. Create a **Services ID** — this is your `APPLE_CLIENT_ID`. Under its
+   "Sign in with Apple" configuration, set the primary App ID from step 1,
+   and add a return URL: `https://<your-cloud-run-url>/login/apple/callback`
+   (Apple requires HTTPS and refuses `localhost`/`127.0.0.1`, so Apple login
+   can only be tested against a deployed URL or a tunnel like ngrok, never a
+   plain local dev server).
+3. Under **Keys**, create a new key with "Sign in with Apple" enabled,
+   associated with the App ID from step 1. Note its Key ID (`APPLE_KEY_ID`)
+   and your Team ID, shown at the top right of the developer portal
+   (`APPLE_TEAM_ID`). Download the `.p8` private key file **once** — Apple
+   won't let you download it again — and paste its full contents (including
+   the `-----BEGIN/END PRIVATE KEY-----` lines) into `APPLE_PRIVATE_KEY`.
 4. That's it — the app signs its own Apple client-secret JWT at startup
    (see `_generate_apple_client_secret` in `app/auth.py`), so there's no
-   separate manual JWT-generation step.
+   separate manual JWT-generation step, and no expiry to track (it's
+   re-signed fresh on every process start, well within Apple's 6-month cap).
 5. Until all four `APPLE_*` variables are set, the "Continue with Apple"
-   button is shown disabled — Google login works independently.
+   button on `/login` is shown disabled — Google login works independently
+   of Apple being configured, and vice versa.
+6. First-time sign-in quirk: Apple only ever sends the user's name once, on
+   the very first authorization for a given Apple ID — the app captures it
+   then (see the `apple_user` handling in `app/auth.py`); if you deny the
+   name/email prompt or it's a returning user, the account still gets
+   created, just without a name.
 
 ## 5. Run with Docker
 
