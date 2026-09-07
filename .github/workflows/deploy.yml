@@ -104,3 +104,7 @@ jobs:
             APPLE_TEAM_ID=apple-team-id:latest
             APPLE_KEY_ID=apple-key-id:latest
             APPLE_PRIVATE_KEY=apple-private-key:latest
+            MAIL_SERVER=mail-server:latest
+            MAIL_USERNAME=mail-username:latest
+            MAIL_PASSWORD=mail-password:latest
+            GEMINI_API_KEY=gemini-api-key:latest

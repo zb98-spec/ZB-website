@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Recipe Tracker</h1>
+  <a class="btn btn-primary" href="{{ url_for('recipes.new_recipe') }}">+ Add recipe</a>
+</div>
+
+{% if recipes %}
+  <div class="table-wrap">
+    <table class="wine-table">
+      <thead>
+        <tr>
+          <th>Recipe</th>
+          <th>Servings</th>
+          <th>Ingredients</th>
+          <th>Steps</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for recipe in recipes %}
+        <tr>
+          <td><a href="{{ url_for('recipes.recipe_detail', recipe_id=recipe.id) }}"><strong>{{ recipe.name }}</strong></a></td>
+          <td>{{ recipe.servings }}</td>
+          <td>{{ recipe.ingredients|length }}</td>
+          <td>{{ recipe.steps|length }}</td>
+          <td class="actions">
+            <a href="{{ url_for('recipes.edit_recipe', recipe_id=recipe.id) }}">Edit</a>
+            <form action="{{ url_for('recipes.delete_recipe', recipe_id=recipe.id) }}" method="post" class="inline-form"
+                  onsubmit="return confirm('Delete this recipe?');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="link-btn">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="empty-state">
+    <p>No recipes saved yet.</p>
+  </div>
+{% endif %}
+{% endblock %}

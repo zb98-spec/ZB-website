@@ -13,6 +13,8 @@ class User(db.Model, UserMixin):
     picture = db.Column(db.String(512))
     username = db.Column(db.String(80), unique=True, nullable=True)
     password_hash = db.Column(db.String(255), nullable=True)
+    failed_login_count = db.Column(db.Integer, nullable=False, default=0)
+    locked_until = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     oauth_accounts = db.relationship(
@@ -20,6 +22,9 @@ class User(db.Model, UserMixin):
     )
     wines = db.relationship(
         "Wine", backref="user", lazy=True, cascade="all, delete-orphan"
+    )
+    recipes = db.relationship(
+        "Recipe", backref="user", lazy=True, cascade="all, delete-orphan"
     )
 
     def set_password(self, password: str) -> None:
@@ -89,3 +94,80 @@ class TastingNote(db.Model):
     notes = db.Column(db.Text)
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class Recipe(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+
+    name = db.Column(db.String(255), nullable=False)
+    servings = db.Column(db.Integer, nullable=False, default=4)  # base servings the ingredients below are for
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    ingredients = db.relationship(
+        "Ingredient",
+        backref="recipe",
+        lazy=True,
+        cascade="all, delete-orphan",
+        order_by="Ingredient.id",
+    )
+    steps = db.relationship(
+        "RecipeStep",
+        backref="recipe",
+        lazy=True,
+        cascade="all, delete-orphan",
+        order_by="RecipeStep.step_number",
+    )
+    comments = db.relationship(
+        "RecipeComment",
+        backref="recipe",
+        lazy=True,
+        cascade="all, delete-orphan",
+        order_by="desc(RecipeComment.created_at)",
+    )
+
+
+class Ingredient(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    recipe_id = db.Column(db.Integer, db.ForeignKey("recipe.id"), nullable=False)
+
+    name = db.Column(db.String(255), nullable=False)
+    quantity = db.Column(db.Numeric(10, 3))  # null = no set quantity, e.g. "salt to taste"
+    unit = db.Column(db.String(50))  # e.g. "cup", "g", "tbsp"
+
+
+class RecipeStep(db.Model):
+    __tablename__ = "recipe_step"
+
+    id = db.Column(db.Integer, primary_key=True)
+    recipe_id = db.Column(db.Integer, db.ForeignKey("recipe.id"), nullable=False)
+
+    step_number = db.Column(db.Integer, nullable=False)
+    instruction = db.Column(db.Text, nullable=False)
+
+
+class RecipeComment(db.Model):
+    __tablename__ = "recipe_comment"
+
+    id = db.Column(db.Integer, primary_key=True)
+    recipe_id = db.Column(db.Integer, db.ForeignKey("recipe.id"), nullable=False)
+
+    body = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class GroceryItem(db.Model):
+    """A single shared list - every logged-in user of the app sees and can
+    edit the same list, so household members can shop off one list."""
+
+    __tablename__ = "grocery_item"
+
+    id = db.Column(db.Integer, primary_key=True)
+    added_by_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True)
+    source_recipe_id = db.Column(db.Integer, db.ForeignKey("recipe.id", ondelete="SET NULL"), nullable=True)
+
+    name = db.Column(db.String(255), nullable=False)
+    quantity = db.Column(db.String(100))  # freeform, e.g. "2 cups" or "1 dozen"
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    added_by = db.relationship("User", lazy=True)

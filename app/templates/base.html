@@ -11,7 +11,7 @@
     <a class="brand" href="{{ url_for('main.index') }}">ZB Hub</a>
     <nav>
       {% if current_user.is_authenticated %}
-        <span class="muted">{{ current_user.name or current_user.username or current_user.email }}</span>
+        <a class="muted" href="{{ url_for('auth.account') }}">{{ current_user.name or current_user.username or current_user.email }}</a>
         <form action="{{ url_for('auth.logout') }}" method="post" class="inline-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="btn btn-ghost">Sign out</button>

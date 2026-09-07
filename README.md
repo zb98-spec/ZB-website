@@ -4,9 +4,11 @@ A simple, central hub/landing page for personal projects, with account
 creation via username/password, or Google/Apple sign-in.
 
 - **Framework**: Flask (app factory + blueprints), server-rendered Jinja templates
-- **Auth**: username/password (Werkzeug password hashing, Flask-Login sessions)
+- **Auth**: username/password (Werkzeug password hashing, Flask-Login sessions,
+  DB-backed lockout after repeated failed logins, email-based password reset)
   plus optional [Authlib](https://authlib.org) OAuth with Google and Apple
 - **Database**: PostgreSQL via Flask-SQLAlchemy + Flask-Migrate (Alembic)
+- **AI**: optional Gemini-powered wine chat bot
 - **Containerized**: Docker + docker-compose for local dev
 - **Deploy target**: Google Cloud Run
 
@@ -16,10 +18,16 @@ creation via username/password, or Google/Apple sign-in.
 app/
   __init__.py     app factory, wires up extensions and blueprints
   extensions.py   db, migrate, login_manager, csrf singletons
-  models.py       User, OAuthAccount, Wine, TastingNote
-  auth.py         /login, /register, OAuth redirect + callback, /logout
+  models.py       User, OAuthAccount, Wine, TastingNote, Recipe,
+                   Ingredient, RecipeStep, RecipeComment, GroceryItem
+  auth.py         /login, /register, /account, forgot/reset password,
+                   OAuth redirect + callback, /logout
+  mail.py         SMTP helper for password-reset emails
+  gemini.py       Gemini REST API helper for the wine chat bot
   main.py         welcome page / hub dashboard
-  wines.py        Wine Library CRUD + tasting log (first project on the hub)
+  wines.py        Wine Library CRUD + tasting log + chat bot (first project)
+  recipes.py      Recipe Tracker: recipes, scaling, comments
+  grocery.py      Grocery List (shared across all app users)
   templates/
   static/css/
 wsgi.py           entrypoint (`app = create_app()`), used by gunicorn/flask run
@@ -29,24 +37,62 @@ migrations/       Alembic migrations (flask db migrate/upgrade)
 ## Pages
 
 - `/` — welcome page. Signed out: hero + "Get started". Signed in: a
-  dashboard of hub projects — currently just "Wine Library".
+  dashboard of hub projects.
 - `/login` — sign-in page: a username/password form (works out of the box,
   no setup needed) plus "Continue with Google"/"Continue with Apple"
-  buttons, shown disabled until those are configured (see §3 and §4).
+  buttons, shown disabled until those are configured (see §3 and §4), and
+  a "Forgot password?" link once email is configured (see §5).
 - `/register` — create an account with a username and password. Usernames
   are 3-80 characters (letters, numbers, `_ . -`) and must be unique;
   passwords need to be at least 8 characters. Registering logs you in
   immediately — there's no email verification step.
-- `/wines` — **Wine Library**: add, edit, delete, and list every bottle in
-  your cellar (name, producer, vintage, type, varietal, region, quantity,
-  purchase price, rating, drinking window, notes). Each user only sees
-  their own wines. Each row has a **Log tasting** button.
+- `/account` — add/update your email (used for password reset) and change
+  your password. An OAuth-only account can set a username + password here
+  too, to also be able to sign in that way.
+- `/forgot-password`, `/reset-password/<token>` — request and complete an
+  email-based password reset. The reset link is a signed token good for 30
+  minutes. Only shown/usable once SMTP is configured (§5).
+- Logging in with the wrong password 5 times locks that account out for 15
+  minutes (tracked in the database, so it holds up across Cloud Run restarts
+  or multiple instances) — regardless of whether the 6th attempt is correct.
+
+### Wine Library (`/wines`)
+
+- Add, edit, delete, and list every bottle in your cellar (name, producer,
+  vintage, type, varietal, region, quantity, purchase price, rating,
+  drinking window, notes). Each user only sees their own wines. Each row
+  has a **Log tasting** button.
 - `/wines/<id>` — a wine's detail page: cellar info plus its tasting
   history, newest-first.
 - `/wines/<id>/tastings/new` — log a tasting: date and score (1-100) are
   required; occasion, people, and notes are optional. Optionally
   decrements the wine's cellar quantity by one (checked by default, since
   logging a tasting usually means a bottle got opened).
+- `/wines/chat` — **Wine Assistant**: ask a free-text question and get an
+  answer from Gemini, with your current cellar included as context. Only
+  shown once `GEMINI_API_KEY` is set (see §6).
+
+### Recipe Tracker (`/recipes`)
+
+- Save a recipe with a name, base servings, a list of ingredients
+  (quantity + unit + name), and numbered steps. Each user only sees their
+  own recipes.
+- The recipe detail page lets you rescale the whole ingredient list to any
+  number of servings (`?servings=N`, or the "Scale" form) — quantities are
+  recalculated proportionally, ingredients with no set quantity (e.g.
+  "salt to taste") are left as-is.
+- Add free-text comments to a recipe (e.g. "add more garlic next time").
+- **Add ingredients to grocery list** button on the detail page pushes
+  every ingredient (scaled to whatever serving count is currently shown)
+  onto the shared Grocery List below.
+
+### Grocery List (`/grocery`)
+
+- One list, shared by every signed-in user of the app (not per-user) — so
+  household members on separate accounts shop off the same list. Add an
+  item with a name and optional freeform quantity ("2 cups", "1 dozen"),
+  delete individual items, or hit **Clear list** to empty it in one click
+  after a shopping trip.
 
 ## 1. Local setup
 
@@ -61,8 +107,14 @@ Fill in `.env`:
 
 - `SECRET_KEY` — generate with `python -c "import secrets; print(secrets.token_hex(32))"`.
 - `DATABASE_URL` — see the free database section below.
-- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — see below.
-- `APPLE_CLIENT_ID` / `APPLE_TEAM_ID` / `APPLE_KEY_ID` / `APPLE_PRIVATE_KEY` — see below.
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — see §3. Optional.
+- `APPLE_CLIENT_ID` / `APPLE_TEAM_ID` / `APPLE_KEY_ID` / `APPLE_PRIVATE_KEY` — see §4. Optional.
+- `MAIL_SERVER` / `MAIL_USERNAME` / `MAIL_PASSWORD` (+ optional `MAIL_PORT` /
+  `MAIL_USE_TLS` / `MAIL_DEFAULT_SENDER`) — see §5. Optional; without it,
+  "forgot password" is unavailable but changing your password while
+  logged in still works.
+- `GEMINI_API_KEY` (+ optional `GEMINI_MODEL`) — see §6. Optional; without
+  it, the Wine Assistant chat link is just hidden.
 
 Run migrations and start the dev server:
 
@@ -109,7 +161,7 @@ a few clicks in the console:
    - Production: `https://<your-cloud-run-url>/login/google/callback`
 5. Copy the Client ID/Secret into `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`
    (in `.env` locally, and as the `google-client-id` / `google-client-secret`
-   Secret Manager secrets for Cloud Run — see §6).
+   Secret Manager secrets for Cloud Run — see §8).
 6. Restart the app (`flask run`) — the "Continue with Google" button on
    `/login` goes from disabled to live as soon as both env vars are set;
    nothing else in the code needs to change.
@@ -148,7 +200,47 @@ Also has to be done in your own account, and requires an active
    name/email prompt or it's a returning user, the account still gets
    created, just without a name.
 
-## 5. Run with Docker
+## 5. Email setup (for password reset)
+
+Any SMTP account works — this uses Python's stdlib `smtplib`, no email
+service SDK required.
+
+1. Easiest option: a Gmail account with an
+   [app password](https://myaccount.google.com/apppasswords) (needs 2-step
+   verification turned on first). Set:
+   - `MAIL_SERVER=smtp.gmail.com`
+   - `MAIL_USERNAME` = your Gmail address
+   - `MAIL_PASSWORD` = the 16-character app password (not your normal
+     Google password)
+2. Or use a free tier from a transactional email service (Resend, Mailgun,
+   SendGrid, etc.) — same three variables, using the SMTP credentials they
+   give you.
+3. `MAIL_PORT` defaults to 587 (STARTTLS) and `MAIL_DEFAULT_SENDER`
+   defaults to `MAIL_USERNAME`; both only need setting if you want
+   something different.
+4. Once `MAIL_SERVER` / `MAIL_USERNAME` / `MAIL_PASSWORD` are all set, the
+   "Forgot password?" link on `/login` appears automatically. Until then,
+   the change-password form under `/account` (while logged in) is the
+   only way to change a password.
+5. A user needs an email on file for this to work — add one at `/account`.
+   `/register` doesn't collect one, to keep sign-up to two fields.
+
+## 6. Gemini setup (for the wine chat bot)
+
+1. Get a free API key at [Google AI Studio](https://aistudio.google.com/apikey)
+   (separate from Google Cloud / OAuth — no billing required for the free tier).
+2. Set `GEMINI_API_KEY` in `.env` (or as the `gemini-api-key` Secret Manager
+   secret for Cloud Run).
+3. That's it — "Ask the Wine Assistant" appears on `/wines` automatically.
+   It sends your current cellar (names, vintages, types, quantities) along
+   with your question as context, so it can answer things like "what
+   should I open tonight?" using what's actually in your cellar.
+4. Optional: `GEMINI_MODEL` overrides the model used (default
+   `gemini-flash-latest`, Google's rolling alias for their latest Flash
+   model — fine for a personal project; pin an exact version if you want
+   stability guarantees instead).
+
+## 7. Run with Docker
 
 ```bash
 docker compose up --build
@@ -168,7 +260,7 @@ container even during `docker compose`, remove the `db` service and the
 `DATABASE_URL` override under `web.environment` from `docker-compose.yml`
 so your `.env` value is used as-is.
 
-## 6. Deploy to Google Cloud Run
+## 8. Deploy to Google Cloud Run
 
 ### Recommended: one script, then GitHub does the rest
 
@@ -209,12 +301,22 @@ That URL is also what you'll open on your iPhone (see below), and what
 you'll eventually plug into the Google/Apple OAuth redirect URIs once
 those are configured.
 
-Google/Apple OAuth secrets (`google-client-id`, `google-client-secret`,
-`apple-client-id`, `apple-team-id`, `apple-key-id`, `apple-private-key`)
-aren't created by the script since they don't exist yet — the app runs
-fine without them, those login buttons just stay disabled. Add them the
-same way (`gcloud secrets create <name> --data-file=-`) once you have
-them; no other changes needed, `deploy.yml` already references all six.
+The script also creates empty placeholders for every optional feature's
+secrets (`google-client-id`, `google-client-secret`, `apple-client-id`,
+`apple-team-id`, `apple-key-id`, `apple-private-key`, `mail-server`,
+`mail-username`, `mail-password`, `gemini-api-key`) — `deploy.yml`
+references all of them unconditionally, and Cloud Run refuses to deploy
+if a referenced secret doesn't exist at all, even an empty one is fine.
+Fill any of them in later, for real, whenever you set that feature up:
+
+```bash
+printf '%s' 'the-real-value' | gcloud secrets versions add google-client-id --data-file=-
+```
+
+The next deploy picks it up automatically — no code or workflow changes
+needed. Re-running `setup_gcp_ci.sh` never overwrites a secret that
+already has a real value, it only fills in placeholders that are still
+missing.
 
 ### Alternative: one-off manual deploy
 
@@ -232,8 +334,10 @@ gcloud run deploy zb-hub \
   --set-secrets SECRET_KEY=secret-key:latest,DATABASE_URL=database-url:latest
 ```
 
-(add `,GOOGLE_CLIENT_ID=google-client-id:latest,...` etc. once those
-secrets exist).
+(add `,GOOGLE_CLIENT_ID=google-client-id:latest,...` etc. for whichever
+of the optional secrets you've actually filled in — unlike the GitHub
+Actions path, a manual deploy only needs to reference secrets you want,
+so there's no need for placeholders here).
 
 Notes:
 
@@ -265,7 +369,13 @@ a proper deploy) the Wine Library pages will.
 
 ## Adding more projects to the hub
 
-Each project is just another blueprint (see `app/wines.py` for the
-pattern: a `Blueprint`, its own models, and CRUD routes scoped to
-`current_user.id`). Register it in `app/__init__.py` and add an entry to
-the `PROJECTS` list in `app/main.py` so it shows up as a card on `/`.
+Each project is just another blueprint. Register it in `app/__init__.py`
+and add an entry to the `PROJECTS` list in `app/main.py` so it shows up
+on `/`. Two patterns to copy from:
+
+- **Per-user data** (most things): see `app/wines.py` or `app/recipes.py`
+  — a `Blueprint`, its own models with a `user_id` foreign key, and CRUD
+  routes that check `current_user.id` before returning or modifying a row.
+- **Shared data**, visible to every account in the app: see
+  `app/grocery.py` — no `user_id` scoping on reads, just `@login_required`
+  to keep it behind sign-in.

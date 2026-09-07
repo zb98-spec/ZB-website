@@ -21,8 +21,10 @@ def create_app() -> Flask:
     csrf.init_app(app)
 
     from .auth import auth_bp, configure_oauth, oauth
+    from .grocery import grocery_bp
     from .main import main_bp
     from .models import User
+    from .recipes import format_qty, recipes_bp
     from .wines import wines_bp
 
     oauth.init_app(app)
@@ -31,6 +33,10 @@ def create_app() -> Flask:
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
     app.register_blueprint(wines_bp)
+    app.register_blueprint(recipes_bp)
+    app.register_blueprint(grocery_bp)
+
+    app.jinja_env.filters["format_qty"] = format_qty
 
     @login_manager.user_loader
     def load_user(user_id):

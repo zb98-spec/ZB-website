@@ -5,6 +5,7 @@ from flask import Blueprint, abort, flash, redirect, render_template, request, u
 from flask_login import current_user, login_required
 
 from .extensions import db
+from .gemini import ask_gemini, gemini_enabled
 from .models import TastingNote, Wine
 
 wines_bp = Blueprint("wines", __name__, url_prefix="/wines")
@@ -60,7 +61,7 @@ def list_wines():
         .order_by(Wine.producer, Wine.vintage)
         .all()
     )
-    return render_template("wines/list.html", wines=wines)
+    return render_template("wines/list.html", wines=wines, chat_enabled=gemini_enabled())
 
 
 @wines_bp.route("/new", methods=["GET", "POST"])
@@ -156,3 +157,50 @@ def delete_tasting(wine_id, tasting_id):
     db.session.commit()
     flash("Tasting note removed.")
     return redirect(url_for("wines.wine_detail", wine_id=wine.id))
+
+
+def _cellar_summary(user_id: int) -> str:
+    wines = Wine.query.filter_by(user_id=user_id).order_by(Wine.producer, Wine.vintage).all()
+    if not wines:
+        return "The cellar is currently empty."
+    lines = []
+    for wine in wines:
+        parts = [wine.name]
+        if wine.producer:
+            parts.append(wine.producer)
+        parts.append(str(wine.vintage) if wine.vintage else "NV")
+        if wine.wine_type:
+            parts.append(wine.wine_type)
+        if wine.region:
+            parts.append(wine.region)
+        lines.append(f"- {', '.join(parts)} (qty: {wine.quantity})")
+    return "\n".join(lines)
+
+
+@wines_bp.route("/chat", methods=["GET", "POST"])
+@login_required
+def chat():
+    if not gemini_enabled():
+        flash("The wine chat bot isn't configured yet.")
+        return redirect(url_for("wines.list_wines"))
+
+    answer = None
+    question = ""
+    if request.method == "POST":
+        question = request.form.get("question", "").strip()
+        if not question:
+            flash("Type a question first.")
+        else:
+            prompt = (
+                "You are a friendly, knowledgeable wine assistant helping "
+                "someone with their home wine cellar. Keep answers concise "
+                "and practical.\n\nHere is their current cellar:\n"
+                f"{_cellar_summary(current_user.id)}\n\n"
+                f"Their question: {question}"
+            )
+            try:
+                answer = ask_gemini(prompt)
+            except RuntimeError as exc:
+                flash(str(exc))
+
+    return render_template("wines/chat.html", question=question, answer=answer)

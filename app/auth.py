@@ -2,20 +2,41 @@ import json
 import os
 import re
 import time
+from datetime import datetime, timedelta
 
 from authlib.integrations.base_client import OAuthError
 from authlib.integrations.flask_client import OAuth
 from authlib.jose import jwt as jose_jwt
-from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
+from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required, login_user, logout_user
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from .extensions import csrf, db
+from .mail import mail_enabled, send_email
 from .models import OAuthAccount, User
 
 auth_bp = Blueprint("auth", __name__)
 oauth = OAuth()
 
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,80}$")
+
+MAX_LOGIN_ATTEMPTS = 5
+LOCKOUT_DURATION = timedelta(minutes=15)
+RESET_TOKEN_MAX_AGE = 1800  # 30 minutes
+
+
+def _make_reset_token(user_id: int) -> str:
+    serializer = URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt="password-reset")
+    return serializer.dumps({"user_id": user_id})
+
+
+def _verify_reset_token(token: str):
+    serializer = URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt="password-reset")
+    try:
+        data = serializer.loads(token, max_age=RESET_TOKEN_MAX_AGE)
+    except (BadSignature, SignatureExpired):
+        return None
+    return data.get("user_id")
 
 
 def _generate_apple_client_secret() -> str:
@@ -67,6 +88,7 @@ def login_page():
         "login.html",
         google_enabled=oauth.create_client("google") is not None,
         apple_enabled=oauth.create_client("apple") is not None,
+        mail_enabled=mail_enabled(),
     )
 
 
@@ -107,12 +129,135 @@ def login_password():
     password = request.form.get("password", "")
 
     user = User.query.filter_by(username=username).first()
+
+    if user is not None and user.locked_until and user.locked_until > datetime.utcnow():
+        flash("Too many failed attempts. Try again in a few minutes.")
+        return redirect(url_for("auth.login_page"))
+
     if user is None or not user.check_password(password):
+        if user is not None:
+            user.failed_login_count = (user.failed_login_count or 0) + 1
+            if user.failed_login_count >= MAX_LOGIN_ATTEMPTS:
+                user.locked_until = datetime.utcnow() + LOCKOUT_DURATION
+            db.session.commit()
         flash("Incorrect username or password.")
         return redirect(url_for("auth.login_page"))
 
+    user.failed_login_count = 0
+    user.locked_until = None
+    db.session.commit()
     login_user(user)
     return redirect(url_for("main.index"))
+
+
+@auth_bp.route("/account", methods=["GET", "POST"])
+@login_required
+def account():
+    if request.method == "POST":
+        action = request.form.get("action")
+
+        if action == "update_email":
+            email = request.form.get("email", "").strip() or None
+            if email and User.query.filter(User.email == email, User.id != current_user.id).first():
+                flash("That email is already in use by another account.")
+            else:
+                current_user.email = email
+                db.session.commit()
+                flash("Email updated.")
+
+        elif action == "change_password":
+            current_password = request.form.get("current_password", "")
+            new_password = request.form.get("new_password", "")
+            confirm_new_password = request.form.get("confirm_new_password", "")
+            # Needed if this account was created via Google/Apple and has no
+            # username yet - can't sign in with a password without one.
+            new_username = request.form.get("username", "").strip()
+
+            if current_user.password_hash and not current_user.check_password(current_password):
+                flash("Current password is incorrect.")
+            elif not current_user.username and not USERNAME_RE.match(new_username):
+                flash("Username must be 3-80 characters: letters, numbers, _ . -")
+            elif (
+                not current_user.username
+                and User.query.filter_by(username=new_username).first() is not None
+            ):
+                flash("That username is already taken.")
+            elif len(new_password) < 8:
+                flash("New password must be at least 8 characters.")
+            elif new_password != confirm_new_password:
+                flash("New passwords don't match.")
+            else:
+                if not current_user.username:
+                    current_user.username = new_username
+                current_user.set_password(new_password)
+                db.session.commit()
+                flash("Password updated.")
+
+        return redirect(url_for("auth.account"))
+
+    return render_template("account.html")
+
+
+@auth_bp.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if current_user.is_authenticated:
+        return redirect(url_for("main.index"))
+    if not mail_enabled():
+        flash("Password reset by email isn't configured yet.")
+        return redirect(url_for("auth.login_page"))
+
+    if request.method == "POST":
+        email = request.form.get("email", "").strip()
+        user = User.query.filter_by(email=email).first() if email else None
+        if user is not None:
+            token = _make_reset_token(user.id)
+            reset_url = url_for("auth.reset_password", token=token, _external=True)
+            try:
+                send_email(
+                    user.email,
+                    "Reset your ZB Hub password",
+                    "Click the link below to reset your password. This link "
+                    f"expires in 30 minutes.\n\n{reset_url}",
+                )
+            except Exception:
+                current_app.logger.exception("Failed to send password reset email")
+        # Same message either way, so this can't be used to test which
+        # emails have an account.
+        flash("If that email is on file, a reset link has been sent.")
+        return redirect(url_for("auth.login_page"))
+
+    return render_template("forgot_password.html")
+
+
+@auth_bp.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    if current_user.is_authenticated:
+        return redirect(url_for("main.index"))
+
+    user_id = _verify_reset_token(token)
+    if user_id is None:
+        flash("That reset link is invalid or has expired.")
+        return redirect(url_for("auth.forgot_password"))
+
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        if len(password) < 8:
+            flash("Password must be at least 8 characters.")
+        elif password != confirm_password:
+            flash("Passwords don't match.")
+        else:
+            user = db.session.get(User, user_id)
+            user.set_password(password)
+            user.failed_login_count = 0
+            user.locked_until = None
+            db.session.commit()
+            login_user(user)
+            flash("Password updated.")
+            return redirect(url_for("main.index"))
+
+    return render_template("reset_password.html", token=token)
 
 
 @auth_bp.route("/login/<provider>")

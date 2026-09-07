@@ -33,6 +33,23 @@ create_or_update_secret() {
   fi
 }
 
+# deploy.yml's `--set-secrets` references a fixed list of Secret Manager
+# secrets (Google/Apple OAuth, email, Gemini) - Cloud Run refuses to deploy
+# if ANY of them don't exist, even for features you haven't set up yet. So
+# every optional secret gets an empty placeholder up front (an empty value
+# keeps that feature disabled, same as if the env var were never set) and
+# is left alone on re-runs, so this never overwrites a real value you add
+# later with `gcloud secrets versions add <name> --data-file=-`.
+create_secret_if_missing() {
+  local name="$1"
+  if gcloud secrets describe "$name" --project "$PROJECT_ID" >/dev/null 2>&1; then
+    echo "    already exists, leaving as-is: $name"
+  else
+    printf '' | gcloud secrets create "$name" --data-file=- --project "$PROJECT_ID" >/dev/null
+    echo "    created empty placeholder: $name"
+  fi
+}
+
 echo "==> Enabling required APIs"
 gcloud services enable \
   run.googleapis.com \
@@ -99,13 +116,17 @@ if [ -z "${DATABASE_URL:-}" ]; then
 fi
 create_or_update_secret database-url "$DATABASE_URL"
 
-echo ""
-echo "Google/Apple OAuth secrets (google-client-id, google-client-secret,"
-echo "apple-client-id, apple-team-id, apple-key-id, apple-private-key) were"
-echo "NOT created - you haven't set those up yet. The app runs fine without"
-echo "them (those login buttons just stay disabled); create them the same"
-echo "way with create_or_update_secret / 'gcloud secrets create' once you have"
-echo "them, no script changes needed."
+echo "==> Creating empty placeholders for not-yet-configured optional features"
+echo "    (Google/Apple OAuth, email for password reset, Gemini chat bot)"
+for NAME in google-client-id google-client-secret apple-client-id apple-team-id \
+            apple-key-id apple-private-key mail-server mail-username \
+            mail-password gemini-api-key; do
+  create_secret_if_missing "$NAME"
+done
+echo "    Fill any of these in later with:"
+echo "      printf '%s' 'the-real-value' | gcloud secrets versions add <name> --data-file=-"
+echo "    That feature turns on automatically on the next deploy - no code"
+echo "    or workflow changes needed."
 
 echo ""
 echo "==================================================================="
