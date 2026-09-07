@@ -22,7 +22,6 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://zbhub:zbhub@db:5432/zbhub
-      DIRECT_URL: postgresql://zbhub:zbhub@db:5432/zbhub
 
 volumes:
   db-data:

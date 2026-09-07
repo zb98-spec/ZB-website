@@ -1,7 +1,8 @@
-node_modules
-.next
+__pycache__
+*.pyc
+.venv
+venv
 .git
 .env
-.env*.local
-npm-debug.log*
+.env.*.local
 README.md
