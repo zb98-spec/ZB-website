@@ -170,18 +170,57 @@ so your `.env` value is used as-is.
 
 ## 6. Deploy to Google Cloud Run
 
-### One-time GCP setup
+### Recommended: one script, then GitHub does the rest
 
-Create the Secret Manager secrets the app needs at runtime (repeat for
-each one: `secret-key`, `database-url`, `google-client-id`,
-`google-client-secret`, `apple-client-id`, `apple-team-id`,
-`apple-key-id`, `apple-private-key`):
+Needs `gcloud` installed and `gcloud auth login` already done, a GCP
+project, this repo pushed to GitHub, and your Neon `DATABASE_URL` handy
+(you'll be prompted for it, input hidden):
 
 ```bash
-echo -n "VALUE" | gcloud secrets create secret-key --data-file=-
+PROJECT_ID=your-project REGION=us-central1 GITHUB_REPO=your-user/your-repo \
+  ./scripts/setup_gcp_ci.sh
 ```
 
-### First deploy (manual, to confirm everything works)
+This single script does the entire one-time GCP setup: enables the
+required APIs, creates the Artifact Registry repo, generates a
+`SECRET_KEY` and stores it plus your `DATABASE_URL` in Secret Manager,
+and creates a deploy service account with Workload Identity Federation
+scoped to your repo (so GitHub Actions can deploy without ever holding a
+long-lived GCP key). It's safe to re-run — existing resources are
+updated in place, not duplicated.
+
+It ends by printing exactly 6 values — add them as **GitHub repo secrets**
+(Settings -> Secrets and variables -> Actions -> New repository secret):
+`GCP_PROJECT_ID`, `GCP_REGION`, `GCP_SA_EMAIL`, `GCP_WIF_PROVIDER`,
+`SECRET_KEY`, `DATABASE_URL`.
+
+That's the whole setup. From then on, `.github/workflows/deploy.yml`
+handles everything on every push to `main`: it runs the test suite
+against a throwaway Postgres container, and — only if that passes —
+builds the image, runs `flask db upgrade` against your real Neon
+database, and deploys to Cloud Run. Pull requests only run the tests.
+Once it's deployed once, get the live URL with:
+
+```bash
+gcloud run services describe zb-hub --region us-central1 --format 'value(status.url)'
+```
+
+That URL is also what you'll open on your iPhone (see below), and what
+you'll eventually plug into the Google/Apple OAuth redirect URIs once
+those are configured.
+
+Google/Apple OAuth secrets (`google-client-id`, `google-client-secret`,
+`apple-client-id`, `apple-team-id`, `apple-key-id`, `apple-private-key`)
+aren't created by the script since they don't exist yet — the app runs
+fine without them, those login buttons just stay disabled. Add them the
+same way (`gcloud secrets create <name> --data-file=-`) once you have
+them; no other changes needed, `deploy.yml` already references all six.
+
+### Alternative: one-off manual deploy
+
+If you'd rather deploy once by hand instead of wiring up the GitHub
+Actions pipeline (e.g. just to try it), skip the service-account/WIF
+parts of the script and run:
 
 ```bash
 gcloud builds submit --tag gcr.io/PROJECT_ID/zb-hub
@@ -190,46 +229,11 @@ gcloud run deploy zb-hub \
   --platform managed \
   --region us-central1 \
   --allow-unauthenticated \
-  --set-secrets SECRET_KEY=secret-key:latest,DATABASE_URL=database-url:latest,GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest,APPLE_CLIENT_ID=apple-client-id:latest,APPLE_TEAM_ID=apple-team-id:latest,APPLE_KEY_ID=apple-key-id:latest,APPLE_PRIVATE_KEY=apple-private-key:latest
+  --set-secrets SECRET_KEY=secret-key:latest,DATABASE_URL=database-url:latest
 ```
 
-After this deploy, update both OAuth providers' redirect URIs to the real
-Cloud Run URL (or a custom domain mapped to it) — you'll get that URL
-back from the command above, or from `gcloud run services describe
-zb-hub --region us-central1 --format 'value(status.url)'`. That URL is
-also what you'll open on your iPhone (see below).
-
-### Automatic deploys via GitHub Actions
-
-`.github/workflows/deploy.yml` runs on every push to `main`: it runs the
-test suite against a throwaway Postgres container, and — only if that
-passes — builds the image, runs `flask db upgrade` against your real Neon
-database, and deploys to Cloud Run. Pull requests only run the tests.
-
-One-time setup, once you have a GCP project and this repo pushed to
-GitHub:
-
-```bash
-PROJECT_ID=your-project REGION=us-central1 GITHUB_REPO=your-user/your-repo \
-  ./scripts/setup_gcp_ci.sh
-```
-
-This script creates a Cloud Run/Artifact Registry deploy service account
-and a Workload Identity Federation provider scoped to your repo, so
-GitHub Actions can deploy without ever holding a long-lived GCP key. It
-prints four values at the end — add them as **GitHub repo secrets**
-(Settings -> Secrets and variables -> Actions):
-
-- `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_SA_EMAIL`, `GCP_WIF_PROVIDER`
-
-Also add two more repo secrets, used only to run migrations directly
-against Neon from the workflow (Neon is reachable over the public
-internet, so this needs no special networking):
-
-- `SECRET_KEY` — same value as the `secret-key` Secret Manager secret
-- `DATABASE_URL` — your Neon connection string
-
-From then on, every push to `main` that passes tests deploys automatically.
+(add `,GOOGLE_CLIENT_ID=google-client-id:latest,...` etc. once those
+secrets exist).
 
 Notes:
 

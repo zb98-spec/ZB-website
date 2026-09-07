@@ -5,6 +5,10 @@
 # Usage:
 #   PROJECT_ID=my-project REGION=us-central1 GITHUB_REPO=my-user/my-repo \
 #     ./scripts/setup_gcp_ci.sh
+#
+# You'll be prompted for your Neon DATABASE_URL if it isn't already set in
+# the environment. Everything else is created automatically and is safe to
+# re-run (existing resources are skipped or updated, not duplicated).
 set -euo pipefail
 
 : "${PROJECT_ID:?Set PROJECT_ID to your GCP project id}"
@@ -16,6 +20,18 @@ SA_EMAIL="${SERVICE_ACCOUNT}@${PROJECT_ID}.iam.gserviceaccount.com"
 POOL="github-pool"
 PROVIDER="github-provider"
 REPOSITORY="zb-hub"
+
+create_or_update_secret() {
+  local name="$1"
+  local value="$2"
+  if gcloud secrets describe "$name" --project "$PROJECT_ID" >/dev/null 2>&1; then
+    printf '%s' "$value" | gcloud secrets versions add "$name" --data-file=- --project "$PROJECT_ID" >/dev/null
+    echo "    updated existing secret: $name"
+  else
+    printf '%s' "$value" | gcloud secrets create "$name" --data-file=- --project "$PROJECT_ID" >/dev/null
+    echo "    created secret: $name"
+  fi
+}
 
 echo "==> Enabling required APIs"
 gcloud services enable \
@@ -73,18 +89,36 @@ gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
   --member="principalSet://iam.googleapis.com/${POOL_ID}/attribute.repository/${GITHUB_REPO}" \
   --project "$PROJECT_ID"
 
+echo "==> Creating app secrets in Secret Manager"
+SECRET_KEY_VALUE="${SECRET_KEY:-$(python3 -c 'import secrets; print(secrets.token_hex(32))' 2>/dev/null || openssl rand -hex 32)}"
+create_or_update_secret secret-key "$SECRET_KEY_VALUE"
+
+if [ -z "${DATABASE_URL:-}" ]; then
+  read -rsp "Neon DATABASE_URL (input hidden, e.g. postgresql://...): " DATABASE_URL
+  echo
+fi
+create_or_update_secret database-url "$DATABASE_URL"
+
 echo ""
-echo "Done. Add these as GitHub Actions repository secrets:"
-echo "  GCP_PROJECT_ID     = ${PROJECT_ID}"
-echo "  GCP_REGION         = ${REGION}"
-echo "  GCP_SA_EMAIL       = ${SA_EMAIL}"
-echo "  GCP_WIF_PROVIDER   = ${POOL_ID}/providers/${PROVIDER}"
+echo "Google/Apple OAuth secrets (google-client-id, google-client-secret,"
+echo "apple-client-id, apple-team-id, apple-key-id, apple-private-key) were"
+echo "NOT created - you haven't set those up yet. The app runs fine without"
+echo "them (those login buttons just stay disabled); create them the same"
+echo "way with create_or_update_secret / 'gcloud secrets create' once you have"
+echo "them, no script changes needed."
+
 echo ""
-echo "You'll also need these Secret Manager secrets (create with"
-echo "  echo -n VALUE | gcloud secrets create NAME --data-file=-):"
-echo "  secret-key, database-url, google-client-id, google-client-secret,"
-echo "  apple-client-id, apple-team-id, apple-key-id, apple-private-key"
+echo "==================================================================="
+echo "Done. Add these as GitHub repo secrets"
+echo "(Settings -> Secrets and variables -> Actions -> New repository secret):"
 echo ""
-echo "And these as GitHub Actions repository secrets (used to run migrations"
-echo "against Neon directly from the workflow):"
-echo "  SECRET_KEY, DATABASE_URL"
+echo "  GCP_PROJECT_ID   = ${PROJECT_ID}"
+echo "  GCP_REGION       = ${REGION}"
+echo "  GCP_SA_EMAIL     = ${SA_EMAIL}"
+echo "  GCP_WIF_PROVIDER = ${POOL_ID}/providers/${PROVIDER}"
+echo "  SECRET_KEY       = ${SECRET_KEY_VALUE}"
+echo "  DATABASE_URL     = (the same Neon connection string you just entered)"
+echo ""
+echo "Once those 6 secrets are in GitHub, every push to main that passes"
+echo "tests deploys automatically."
+echo "==================================================================="
