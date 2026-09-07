@@ -129,11 +129,21 @@ so your `.env` value is used as-is.
 
 ## 6. Deploy to Google Cloud Run
 
-```bash
-# Build and push the image
-gcloud builds submit --tag gcr.io/PROJECT_ID/zb-hub
+### One-time GCP setup
 
-# Deploy
+Create the Secret Manager secrets the app needs at runtime (repeat for
+each one: `secret-key`, `database-url`, `google-client-id`,
+`google-client-secret`, `apple-client-id`, `apple-team-id`,
+`apple-key-id`, `apple-private-key`):
+
+```bash
+echo -n "VALUE" | gcloud secrets create secret-key --data-file=-
+```
+
+### First deploy (manual, to confirm everything works)
+
+```bash
+gcloud builds submit --tag gcr.io/PROJECT_ID/zb-hub
 gcloud run deploy zb-hub \
   --image gcr.io/PROJECT_ID/zb-hub \
   --platform managed \
@@ -142,22 +152,71 @@ gcloud run deploy zb-hub \
   --set-secrets SECRET_KEY=secret-key:latest,DATABASE_URL=database-url:latest,GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest,APPLE_CLIENT_ID=apple-client-id:latest,APPLE_TEAM_ID=apple-team-id:latest,APPLE_KEY_ID=apple-key-id:latest,APPLE_PRIVATE_KEY=apple-private-key:latest
 ```
 
+After this deploy, update both OAuth providers' redirect URIs to the real
+Cloud Run URL (or a custom domain mapped to it) — you'll get that URL
+back from the command above, or from `gcloud run services describe
+zb-hub --region us-central1 --format 'value(status.url)'`. That URL is
+also what you'll open on your iPhone (see below).
+
+### Automatic deploys via GitHub Actions
+
+`.github/workflows/deploy.yml` runs on every push to `main`: it runs the
+test suite against a throwaway Postgres container, and — only if that
+passes — builds the image, runs `flask db upgrade` against your real Neon
+database, and deploys to Cloud Run. Pull requests only run the tests.
+
+One-time setup, once you have a GCP project and this repo pushed to
+GitHub:
+
+```bash
+PROJECT_ID=your-project REGION=us-central1 GITHUB_REPO=your-user/your-repo \
+  ./scripts/setup_gcp_ci.sh
+```
+
+This script creates a Cloud Run/Artifact Registry deploy service account
+and a Workload Identity Federation provider scoped to your repo, so
+GitHub Actions can deploy without ever holding a long-lived GCP key. It
+prints four values at the end — add them as **GitHub repo secrets**
+(Settings -> Secrets and variables -> Actions):
+
+- `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_SA_EMAIL`, `GCP_WIF_PROVIDER`
+
+Also add two more repo secrets, used only to run migrations directly
+against Neon from the workflow (Neon is reachable over the public
+internet, so this needs no special networking):
+
+- `SECRET_KEY` — same value as the `secret-key` Secret Manager secret
+- `DATABASE_URL` — your Neon connection string
+
+From then on, every push to `main` that passes tests deploys automatically.
+
 Notes:
 
-- Store secrets in [Secret Manager](https://cloud.google.com/secret-manager)
-  rather than plain `--set-env-vars`; the command above references secrets
-  by name (create them first with `gcloud secrets create ...`).
 - Cloud Run injects `PORT` automatically; gunicorn in the Dockerfile binds
   to it already.
-- After the first deploy, update both OAuth providers' redirect URIs to
-  the real Cloud Run URL (or a custom domain mapped to it).
-- Run `flask db upgrade` against the production database before/after each
-  deploy that changes `app/models.py` — either locally with `DATABASE_URL`
-  pointed at prod, or as a one-off Cloud Run job.
-- Both Cloud Run and Neon/Supabase free tiers scale to zero, so this whole
-  stack can run at $0 for low-traffic personal use — Cloud Run's free tier
+- Both Cloud Run and Neon's free tiers scale to zero, so this whole stack
+  can run at $0 for low-traffic personal use — Cloud Run's free tier
   covers a generous number of requests/month, and Cloud Build has a free
   monthly quota for image builds.
+
+## Viewing it on your iPhone
+
+Once it's deployed to Cloud Run (above), the service URL is a normal
+public HTTPS address — open it in Safari on your iPhone like any other
+site, no extra setup needed. This is also the easiest way to test Apple
+Sign In, since Apple refuses to redirect to `localhost`.
+
+Before deploying, you can still preview it from your phone if it's on the
+same Wi-Fi as the computer running the app:
+
+```bash
+flask run --host 0.0.0.0
+```
+
+then visit `http://<your-computer's-LAN-IP>:5000` in Safari (find the IP
+with `ipconfig getifaddr en0` on a Mac). Google/Apple sign-in won't work
+over plain `http://`, but the welcome page and (once you're logged in via
+a proper deploy) the Wine Library pages will.
 
 ## Adding more projects to the hub
 
