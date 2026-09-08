@@ -5,6 +5,12 @@ Results of the test pass described in `TEST_PLAN.md`, run against
 a report only — **no application code was modified** to fix anything
 listed below.
 
+**Update:** the suite was subsequently reorganized into three tiered files
+(`tests/test_unit.py`, `tests/test_integration.py`, `tests/test_e2e.py` —
+see `TEST_PLAN.md` §3). All test bodies below moved with it; none were
+changed in the process, and 2 new end-to-end journeys were added. File
+references below point at their current location.
+
 ## Summary
 
 | Run | Result |
@@ -13,17 +19,18 @@ listed below.
 | Full suite (pre-existing + new tests added this pass), clean DB | 65/65 passed |
 | Full suite **+ 2 new regression tests for defects found below** | 65 passed, **2 failed** |
 | Same suite, re-run again with **no DB reset** between runs | 12-13 additional spurious failures (see Finding 3) |
+| After reorganizing into `test_unit.py` / `test_integration.py` / `test_e2e.py` (+2 new e2e journeys), clean DB | 67 passed, **2 failed** (same 2 as above) |
 
 The 2 failures below are reproducible defects in the application, isolated
-with dedicated tests in `tests/test_known_defects.py`. Everything else in
-the 67-test suite passes.
+with dedicated tests in `tests/test_integration.py`. Everything else in
+the 69-test suite passes.
 
 ```
 $ pytest -v
 ...
-FAILED tests/test_known_defects.py::test_non_numeric_vintage_should_not_crash_the_server
-FAILED tests/test_known_defects.py::test_reset_link_for_a_deleted_account_should_not_crash_the_server
-========================= 2 failed, 65 passed in 6.26s =========================
+FAILED tests/test_integration.py::test_non_numeric_vintage_should_not_crash_the_server
+FAILED tests/test_integration.py::test_reset_link_for_a_deleted_account_should_not_crash_the_server
+======================== 2 failed, 67 passed in 11.39s =========================
 ```
 
 ---
@@ -33,7 +40,7 @@ FAILED tests/test_known_defects.py::test_reset_link_for_a_deleted_account_should
 - **Severity:** Medium (crashes the request with a 500; reachable by any
   logged-in user through normal form fields, no special access needed)
 - **Location:** `app/wines.py:23-25`, `_optional_int()`
-- **Reproduced by:** `tests/test_known_defects.py::test_non_numeric_vintage_should_not_crash_the_server`
+- **Reproduced by:** `tests/test_integration.py::test_non_numeric_vintage_should_not_crash_the_server`
 
 ```python
 def _optional_int(form, key: str):
@@ -77,7 +84,7 @@ error.
 - **Severity:** Low (narrow race window, not attacker-controlled) but a
   genuine unhandled crash path
 - **Location:** `app/auth.py:250-252`, `reset_password()`
-- **Reproduced by:** `tests/test_known_defects.py::test_reset_link_for_a_deleted_account_should_not_crash_the_server`
+- **Reproduced by:** `tests/test_integration.py::test_reset_link_for_a_deleted_account_should_not_crash_the_server`
 
 ```python
 else:
@@ -108,19 +115,23 @@ function for a bad token.
 
 - **Severity:** Test-infrastructure issue, not an application defect —
   flagged because it was directly observed while running the suite twice.
-- **Where:** every test file under `tests/` (pre-existing and newly added
-  alike)
+- **Where:** `tests/test_integration.py` and `tests/test_e2e.py` (every
+  DB-backed test, pre-existing and newly added alike; `tests/test_unit.py`
+  is unaffected — it touches no database)
 
-None of the test files reset, truncate, or use a transactional rollback
-around the shared Postgres database (no `conftest.py`, no `create_all` /
-`drop_all`, no per-test transaction). Several tests look up rows they just
-created by a **non-unique** field using `.filter_by(...).one()` (e.g. wine
-or recipe `name`, a hard-coded literal like `"Sancerre"` or `"Pancakes"`).
+None of the DB-backed tests reset, truncate, or use a transactional
+rollback around the shared Postgres database (no `conftest.py`, no
+`create_all` / `drop_all`, no per-test transaction). Several tests look up
+rows they just created by a **non-unique** field using
+`.filter_by(...).one()` (e.g. wine or recipe `name`, a hard-coded literal
+like `"Sancerre"` or `"Pancakes"`).
 
-The first `pytest` run after a fresh migration passes cleanly (65/65 — see
-summary table). Running `pytest` again immediately afterward, against the
-same database and with no changes, reproducibly breaks 12 of the
-already-passed tests:
+The first `pytest` run after a fresh migration passes cleanly (65/65 at the
+time this was found — see summary table). Running `pytest` again
+immediately afterward, against the same database and with no changes,
+reproducibly breaks 12 of the already-passed tests (file names below are
+from before the tier reorganization; all 12 now live in
+`tests/test_integration.py`, unchanged):
 
 ```
 $ pytest -q        # first run
@@ -145,11 +156,12 @@ FAILED tests/test_wines_extra.py::test_delete_tasting_requires_ownership
 Every failure is the same root cause — `sqlalchemy.exc.MultipleResultsFound:
 Multiple rows were found when exactly one was required` — because the
 second run inserted a second "Sancerre", second "Pancakes", etc., and the
-helper that looks the row back up by name (`_wine_id()` / `_recipe_id()` in
-each test file) can no longer disambiguate. This reproduces with the
-pre-existing test files alone (`test_recipes.py`, `test_wines.py`); the new
-files added this pass (`test_wines_extra.py`, `test_recipes_extra.py`)
-inherited the same convention and fail the same way on a second run.
+helper that looks the row back up by name (`_wine_id()` / `_recipe_id()`)
+can no longer disambiguate. This reproduces with the pre-existing tests
+alone; the tests added during this pass inherited the same convention and
+fail the same way on a second run. The same risk now applies to
+`tests/test_e2e.py`, whose journeys also look up rows by fixed names
+(`"Chateauneuf-du-Pape"`, `"Weeknight Tacos"`).
 
 This does not affect the pass/fail counts reported above (both official
 runs were against a freshly migrated, empty database), but it means:
@@ -167,9 +179,8 @@ per the instructions for this pass.
 
 ## Everything else: passing
 
-The remaining 65 tests — the full pre-existing suite (28 tests) plus the
-new coverage added for this pass (37 tests across `test_navigation.py`,
-`test_units.py`, `test_wines_extra.py`, `test_recipes_extra.py`,
-`test_account.py`, `test_oauth.py`, `test_grocery_extra.py`) — pass
-consistently on a freshly migrated database. See `TEST_PLAN.md` §4 for what
-each new file covers.
+The remaining 67 tests — 9 in `tests/test_unit.py`, 56 in
+`tests/test_integration.py`, and 2 full-journey tests in
+`tests/test_e2e.py` — pass consistently on a freshly migrated database.
+See `TEST_PLAN.md` §3 for what each file covers and §5 for when to run
+which tier.

@@ -1,3 +1,9 @@
+"""Unit tests: pure functions only, no Flask app, no database, no HTTP.
+
+Run these constantly while developing - they need nothing but the
+interpreter and should complete in a fraction of a second.
+"""
+
 from decimal import Decimal
 
 from app.recipes import _parse_quantity, _parse_servings, format_qty
