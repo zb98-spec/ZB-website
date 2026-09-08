@@ -8,7 +8,8 @@ creation via username/password, or Google/Apple sign-in.
   DB-backed lockout after repeated failed logins, email-based password reset)
   plus optional [Authlib](https://authlib.org) OAuth with Google and Apple
 - **Database**: PostgreSQL via Flask-SQLAlchemy + Flask-Migrate (Alembic)
-- **AI**: optional Gemini-powered wine chat bot
+- **AI**: optional Gemini-powered wine chat bot + bulk "research my cellar" button
+- **Bot**: optional Telegram bot for checking/updating your wine cellar on the go
 - **Containerized**: Docker + docker-compose for local dev
 - **Deploy target**: Google Cloud Run
 
@@ -23,9 +24,10 @@ app/
   auth.py         /login, /register, /account, forgot/reset password,
                    OAuth redirect + callback, /logout
   mail.py         SMTP helper for password-reset emails
-  gemini.py       Gemini REST API helper for the wine chat bot
+  gemini.py       Gemini REST API helper (chat bot + AI cellar research)
+  telegram_bot.py Telegram webhook + bot commands
   main.py         welcome page / hub dashboard
-  wines.py        Wine Library CRUD + tasting log + chat bot (first project)
+  wines.py        Wine Library CRUD + tasting log + chat bot + AI research
   recipes.py      Recipe Tracker: recipes, scaling, comments
   grocery.py      Grocery List (shared across all app users)
   templates/
@@ -48,7 +50,8 @@ migrations/       Alembic migrations (flask db migrate/upgrade)
   immediately — there's no email verification step.
 - `/account` — add/update your email (used for password reset) and change
   your password. An OAuth-only account can set a username + password here
-  too, to also be able to sign in that way.
+  too, to also be able to sign in that way. Also where you link the
+  Telegram bot to your account (§7), once it's configured.
 - `/forgot-password`, `/reset-password/<token>` — request and complete an
   email-based password reset. The reset link is a signed token good for 30
   minutes. Only shown/usable once SMTP is configured (§5).
@@ -71,6 +74,35 @@ migrations/       Alembic migrations (flask db migrate/upgrade)
 - `/wines/chat` — **Wine Assistant**: ask a free-text question and get an
   answer from Gemini, with your current cellar included as context. Only
   shown once `GEMINI_API_KEY` is set (see §6).
+- **Research all with AI** button on the library page: for each wine, asks
+  Gemini for its best estimate of rating, current market price, drinking
+  window, and tasting notes, then updates the wine. It never touches
+  `purchase_price` (what you actually paid) or your own `notes` — AI
+  results go into separate `estimated_price` / `tasting_profile` fields,
+  shown on the wine's detail page. Processes up to 15 wines per click
+  (click again for the rest, in a bigger cellar) since it's a handful of
+  sequential AI calls in one request, with no background job queue behind
+  it. A wine where Gemini's response doesn't parse is simply skipped, not
+  fatal to the rest of the batch.
+
+### Telegram bot
+
+Once configured (§7) and linked from `/account`, message the bot directly
+on Telegram:
+
+- `/window` — every bottle currently in its drinking window
+- `/add <name> | <producer> | <vintage> | <type> | <qty>` — add a bottle
+  (only name is required, e.g. `/add Opus One`)
+- `/notes <name or #id>` — that bottle's rating, tasting notes (AI and
+  your own), and recent tasting history
+- `/log <name or #id> | <score 1-100> | <notes>` — log a tasting; like the
+  web form, decrements the cellar quantity by one
+- `/link <code>`, `/unlink`, `/help` — connect/disconnect this chat, or
+  show the command list
+
+A text search (name or producer, case-insensitive) is used to find a
+bottle; if it matches more than one, the bot lists candidates with their
+`#id` so you can be specific on the next try.
 
 ### Recipe Tracker (`/recipes`)
 
@@ -114,7 +146,10 @@ Fill in `.env`:
   "forgot password" is unavailable but changing your password while
   logged in still works.
 - `GEMINI_API_KEY` (+ optional `GEMINI_MODEL`) — see §6. Optional; without
-  it, the Wine Assistant chat link is just hidden.
+  it, the Wine Assistant chat and AI research button are just hidden.
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_WEBHOOK_SECRET` — see §7. Optional;
+  without both, the Telegram linking option on `/account` is hidden and
+  the webhook route 404s.
 
 Run migrations and start the dev server:
 
@@ -161,7 +196,7 @@ a few clicks in the console:
    - Production: `https://<your-cloud-run-url>/login/google/callback`
 5. Copy the Client ID/Secret into `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`
    (in `.env` locally, and as the `google-client-id` / `google-client-secret`
-   Secret Manager secrets for Cloud Run — see §8).
+   Secret Manager secrets for Cloud Run — see §9).
 6. Restart the app (`flask run`) — the "Continue with Google" button on
    `/login` goes from disabled to live as soon as both env vars are set;
    nothing else in the code needs to change.
@@ -225,22 +260,49 @@ service SDK required.
 5. A user needs an email on file for this to work — add one at `/account`.
    `/register` doesn't collect one, to keep sign-up to two fields.
 
-## 6. Gemini setup (for the wine chat bot)
+## 6. Gemini setup (for the wine chat bot + AI research)
 
 1. Get a free API key at [Google AI Studio](https://aistudio.google.com/apikey)
    (separate from Google Cloud / OAuth — no billing required for the free tier).
 2. Set `GEMINI_API_KEY` in `.env` (or as the `gemini-api-key` Secret Manager
    secret for Cloud Run).
-3. That's it — "Ask the Wine Assistant" appears on `/wines` automatically.
-   It sends your current cellar (names, vintages, types, quantities) along
-   with your question as context, so it can answer things like "what
-   should I open tonight?" using what's actually in your cellar.
+3. That's it — "Ask the Wine Assistant" and "Research all with AI" both
+   appear on `/wines` automatically. The chat bot sends your current cellar
+   (names, vintages, types, quantities) along with your question as
+   context, so it can answer things like "what should I open tonight?"
+   using what's actually in your cellar. AI research asks Gemini, per
+   wine, for a rating/price/drinking-window/tasting-notes estimate,
+   constrained to a JSON response so it parses reliably.
 4. Optional: `GEMINI_MODEL` overrides the model used (default
    `gemini-flash-latest`, Google's rolling alias for their latest Flash
    model — fine for a personal project; pin an exact version if you want
    stability guarantees instead).
 
-## 7. Run with Docker
+## 7. Telegram bot setup
+
+1. Message [@BotFather](https://t.me/BotFather) on Telegram, send
+   `/newbot`, and follow the prompts. You'll get back a token that looks
+   like `123456789:AAF...` — that's `TELEGRAM_BOT_TOKEN`.
+2. Make up `TELEGRAM_WEBHOOK_SECRET` — any random string, e.g.
+   `openssl rand -hex 24`. It's how the app verifies an incoming webhook
+   request actually came from Telegram, not just anyone who finds the URL.
+3. Set both in `.env` (or as the `telegram-bot-token` /
+   `telegram-webhook-secret` Secret Manager secrets for Cloud Run).
+4. **This one needs a real deployed HTTPS URL** — Telegram won't send
+   webhooks to `localhost`. After deploying (§9), point Telegram at it:
+   ```bash
+   TELEGRAM_BOT_TOKEN=... TELEGRAM_WEBHOOK_SECRET=... \
+   CLOUD_RUN_URL=https://your-app-url.a.run.app \
+     ./scripts/set_telegram_webhook.sh
+   ```
+5. Message your bot `/start` on Telegram, then sign in to ZB Hub, go to
+   `/account`, click **Get a link code**, and send `/link <code>` to the
+   bot within 10 minutes. From then on the bot commands (§ Telegram bot
+   above) operate on that account's cellar.
+6. If the bot token or webhook secret ever change, re-run
+   `set_telegram_webhook.sh` with the new values.
+
+## 8. Run with Docker
 
 ```bash
 docker compose up --build
@@ -260,7 +322,7 @@ container even during `docker compose`, remove the `db` service and the
 `DATABASE_URL` override under `web.environment` from `docker-compose.yml`
 so your `.env` value is used as-is.
 
-## 8. Deploy to Google Cloud Run
+## 9. Deploy to Google Cloud Run
 
 ### Recommended: one script, then GitHub does the rest
 
@@ -304,19 +366,21 @@ those are configured.
 The script also creates empty placeholders for every optional feature's
 secrets (`google-client-id`, `google-client-secret`, `apple-client-id`,
 `apple-team-id`, `apple-key-id`, `apple-private-key`, `mail-server`,
-`mail-username`, `mail-password`, `gemini-api-key`) — `deploy.yml`
-references all of them unconditionally, and Cloud Run refuses to deploy
-if a referenced secret doesn't exist at all, even an empty one is fine.
-Fill any of them in later, for real, whenever you set that feature up:
+`mail-username`, `mail-password`, `gemini-api-key`, `telegram-bot-token`,
+`telegram-webhook-secret`) — `deploy.yml` references all of them
+unconditionally, and Cloud Run refuses to deploy if a referenced secret
+doesn't exist at all, even an empty one is fine. Fill any of them in
+later, for real, whenever you set that feature up:
 
 ```bash
 printf '%s' 'the-real-value' | gcloud secrets versions add google-client-id --data-file=-
 ```
 
 The next deploy picks it up automatically — no code or workflow changes
-needed. Re-running `setup_gcp_ci.sh` never overwrites a secret that
-already has a real value, it only fills in placeholders that are still
-missing.
+needed (for Telegram specifically, also re-run `set_telegram_webhook.sh`
+per §7 once, after that deploy). Re-running `setup_gcp_ci.sh` never
+overwrites a secret that already has a real value, it only fills in
+placeholders that are still missing.
 
 ### Alternative: one-off manual deploy
 

@@ -108,3 +108,5 @@ jobs:
             MAIL_USERNAME=mail-username:latest
             MAIL_PASSWORD=mail-password:latest
             GEMINI_API_KEY=gemini-api-key:latest
+            TELEGRAM_BOT_TOKEN=telegram-bot-token:latest
+            TELEGRAM_WEBHOOK_SECRET=telegram-webhook-secret:latest

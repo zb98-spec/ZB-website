@@ -44,4 +44,33 @@
     <button type="submit" class="btn btn-primary">{{ "Change password" if current_user.password_hash else "Set password" }}</button>
   </div>
 </form>
+
+{% if telegram_enabled %}
+  <h2>Telegram bot</h2>
+  {% if current_user.telegram_chat_id %}
+    <p class="muted">This account is linked to a Telegram chat.</p>
+    <form method="post" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="unlink_telegram">
+      <button type="submit" class="btn btn-ghost">Unlink Telegram</button>
+    </form>
+  {% elif telegram_code_active %}
+    <p class="muted">
+      Send this to the bot within 10 minutes:
+      <strong>/link {{ current_user.telegram_link_code }}</strong>
+    </p>
+    <form method="post" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="generate_telegram_code">
+      <button type="submit" class="btn btn-ghost">Generate a new code</button>
+    </form>
+  {% else %}
+    <p class="muted">Link this account to use the wine cellar bot on Telegram.</p>
+    <form method="post" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="generate_telegram_code">
+      <button type="submit" class="btn btn-primary">Get a link code</button>
+    </form>
+  {% endif %}
+{% endif %}
 {% endblock %}

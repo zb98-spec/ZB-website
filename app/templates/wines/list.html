@@ -4,8 +4,14 @@
 <div class="page-header">
   <h1>Wine Library</h1>
   <div>
-    {% if chat_enabled %}
+    {% if ai_enabled %}
       <a class="btn btn-ghost" href="{{ url_for('wines.chat') }}">Ask the Wine Assistant</a>
+      {% if wines %}
+        <form action="{{ url_for('wines.research_all') }}" method="post" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-ghost">Research all with AI</button>
+        </form>
+      {% endif %}
     {% endif %}
     <a class="btn btn-primary" href="{{ url_for('wines.new_wine') }}">+ Add wine</a>
   </div>

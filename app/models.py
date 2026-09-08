@@ -15,6 +15,9 @@ class User(db.Model, UserMixin):
     password_hash = db.Column(db.String(255), nullable=True)
     failed_login_count = db.Column(db.Integer, nullable=False, default=0)
     locked_until = db.Column(db.DateTime, nullable=True)
+    telegram_chat_id = db.Column(db.BigInteger, unique=True, nullable=True)
+    telegram_link_code = db.Column(db.String(16), nullable=True)
+    telegram_link_code_expires = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     oauth_accounts = db.relationship(
@@ -64,11 +67,15 @@ class Wine(db.Model):
     country = db.Column(db.String(255))
 
     quantity = db.Column(db.Integer, nullable=False, default=1)
-    purchase_price = db.Column(db.Numeric(8, 2))
+    purchase_price = db.Column(db.Numeric(8, 2))  # what you actually paid - AI research never touches this
     rating = db.Column(db.Integer)  # 1-100
     drink_from = db.Column(db.Integer)  # earliest recommended drinking year
     drink_by = db.Column(db.Integer)  # latest recommended drinking year
-    notes = db.Column(db.Text)
+    notes = db.Column(db.Text)  # the user's own notes - AI research never touches this
+
+    estimated_price = db.Column(db.Numeric(8, 2))  # AI's estimate of current market value
+    tasting_profile = db.Column(db.Text)  # AI-sourced tasting notes, distinct from the user's own `notes`
+    researched_at = db.Column(db.DateTime)  # when AI research last updated this wine
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 

@@ -25,6 +25,7 @@ def create_app() -> Flask:
     from .main import main_bp
     from .models import User
     from .recipes import format_qty, recipes_bp
+    from .telegram_bot import telegram_bp
     from .wines import wines_bp
 
     oauth.init_app(app)
@@ -35,6 +36,7 @@ def create_app() -> Flask:
     app.register_blueprint(wines_bp)
     app.register_blueprint(recipes_bp)
     app.register_blueprint(grocery_bp)
+    app.register_blueprint(telegram_bp)
 
     app.jinja_env.filters["format_qty"] = format_qty
 
