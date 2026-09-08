@@ -5,10 +5,19 @@ Results of the test pass described in `TEST_PLAN.md`, run against
 a report only — **no application code was modified** to fix anything
 listed below.
 
-**Update:** the suite was subsequently reorganized into three tiered files
+**Update 1:** the suite was reorganized into three tiered files
 (`tests/test_unit.py`, `tests/test_integration.py`, `tests/test_e2e.py` —
 see `TEST_PLAN.md` §3). All test bodies below moved with it; none were
-changed in the process, and 2 new end-to-end journeys were added. File
+changed in the process, and 2 new end-to-end journeys were added.
+
+**Update 2:** PR #1 was then merged into `main` (it had gained a Telegram
+bot and an AI wine-research feature, each with its own test file, since
+this pass started), and this branch was rebased onto the result. The two
+new test files (`test_ai_research.py`, `test_telegram.py`) were folded
+into `tests/test_integration.py` as two more single-feature sections
+(mocking the Gemini/Telegram network calls, same as the existing OAuth/mail
+"not configured" tests) rather than left as separate files, to keep the
+three-tier split exact. No test bodies were changed in the process. File
 references below point at their current location.
 
 ## Summary
@@ -20,17 +29,18 @@ references below point at their current location.
 | Full suite **+ 2 new regression tests for defects found below** | 65 passed, **2 failed** |
 | Same suite, re-run again with **no DB reset** between runs | 12-13 additional spurious failures (see Finding 3) |
 | After reorganizing into `test_unit.py` / `test_integration.py` / `test_e2e.py` (+2 new e2e journeys), clean DB | 67 passed, **2 failed** (same 2 as above) |
+| After merging PR #1 (Telegram bot + AI research) into `main`, rebasing, and folding their 2 new test files into `test_integration.py`, clean DB | 82 passed, **2 failed** (same 2 as above) |
 
 The 2 failures below are reproducible defects in the application, isolated
 with dedicated tests in `tests/test_integration.py`. Everything else in
-the 69-test suite passes.
+the 84-test suite passes.
 
 ```
 $ pytest -v
 ...
 FAILED tests/test_integration.py::test_non_numeric_vintage_should_not_crash_the_server
 FAILED tests/test_integration.py::test_reset_link_for_a_deleted_account_should_not_crash_the_server
-======================== 2 failed, 67 passed in 11.39s =========================
+======================== 2 failed, 82 passed in 17.48s =========================
 ```
 
 ---
@@ -179,7 +189,7 @@ per the instructions for this pass.
 
 ## Everything else: passing
 
-The remaining 67 tests — 9 in `tests/test_unit.py`, 56 in
+The remaining 82 tests — 9 in `tests/test_unit.py`, 71 in
 `tests/test_integration.py`, and 2 full-journey tests in
 `tests/test_e2e.py` — pass consistently on a freshly migrated database.
 See `TEST_PLAN.md` §3 for what each file covers and §5 for when to run

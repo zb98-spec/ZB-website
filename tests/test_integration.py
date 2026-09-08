@@ -1,8 +1,9 @@
 """Integration tests: exercise one feature/route at a time through Flask's
 test client against a real database (migrations applied, see TEST_PLAN.md).
 Each test targets a single blueprint's behavior in relative isolation -
-auth, wines, recipes, grocery, account, OAuth routing, and the two known
-defects captured as regression tests at the bottom of this file.
+auth, wines, recipes, grocery, account, OAuth routing, AI wine research,
+the Telegram bot webhook, and the two known defects captured as regression
+tests at the bottom of this file.
 
 For multi-step flows that chain several features together in one session
 (the way a real user actually moves through the app), see test_e2e.py.
@@ -10,6 +11,8 @@ For multi-step flows that chain several features together in one session
 
 import os
 import uuid
+from datetime import datetime, timedelta
+from unittest.mock import patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault(
@@ -27,11 +30,19 @@ for _var in (
     "GEMINI_API_KEY",
 ):
     os.environ.pop(_var, None)
+# The Telegram bot section below needs these set to reach its routes at
+# all (telegram_enabled() gates them) - every test in this file that
+# doesn't care about Telegram is unaffected, since nothing else in this
+# suite renders Telegram-conditional content except account.html's
+# "Telegram" section, which no other test asserts the absence of.
+os.environ["TELEGRAM_BOT_TOKEN"] = "123456:fake-token-for-tests"
+os.environ["TELEGRAM_WEBHOOK_SECRET"] = "test-webhook-secret"
+TELEGRAM_SECRET = os.environ["TELEGRAM_WEBHOOK_SECRET"]
 
 from app import create_app  # noqa: E402
 from app.auth import _make_reset_token  # noqa: E402
 from app.extensions import db  # noqa: E402
-from app.models import GroceryItem, Recipe, User, Wine  # noqa: E402
+from app.models import GroceryItem, Recipe, TastingNote, User, Wine  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -750,6 +761,96 @@ def test_wine_library_hides_chat_link_when_not_configured():
 
 
 # ---------------------------------------------------------------------------
+# AI wine research ("Research all with AI", Gemini deliberately left
+# unconfigured by default - individual tests below toggle GEMINI_API_KEY
+# and mock the network call rather than hitting the real Gemini API).
+# ---------------------------------------------------------------------------
+
+def test_research_all_redirects_when_not_configured():
+    app = _app()
+    client = _logged_in_client(app)
+    client.post("/wines/new", data={"name": "Test Wine", "quantity": "1"}, follow_redirects=True)
+
+    resp = client.post("/wines/research-all", follow_redirects=True)
+    assert b"isn&#39;t configured yet" in resp.data
+
+
+def test_research_all_updates_wine_fields():
+    app = _app()
+    client = _logged_in_client(app)
+    client.post("/wines/new", data={"name": "Researchable Wine", "quantity": "1"}, follow_redirects=True)
+
+    fake_result = {
+        "rating": 92,
+        "estimated_price": 45.5,
+        "drink_from": 2024,
+        "drink_by": 2030,
+        "tasting_notes": "Notes of cherry and oak.",
+    }
+
+    os.environ["GEMINI_API_KEY"] = "fake-key-for-test"
+    try:
+        with patch("app.wines.ask_gemini_json", return_value=fake_result) as mocked:
+            resp = client.post("/wines/research-all", follow_redirects=True)
+        assert mocked.called
+        assert b"Researched 1 wine" in resp.data
+
+        with app.app_context():
+            wine = Wine.query.filter_by(name="Researchable Wine").one()
+            assert wine.rating == 92
+            assert float(wine.estimated_price) == 45.5
+            assert wine.drink_from == 2024
+            assert wine.drink_by == 2030
+            assert wine.tasting_profile == "Notes of cherry and oak."
+            assert wine.researched_at is not None
+    finally:
+        os.environ.pop("GEMINI_API_KEY", None)
+
+
+def test_research_all_counts_failures_without_crashing():
+    app = _app()
+    client = _logged_in_client(app)
+    client.post("/wines/new", data={"name": "Failing Wine", "quantity": "1"}, follow_redirects=True)
+
+    os.environ["GEMINI_API_KEY"] = "fake-key-for-test"
+    try:
+        with patch("app.wines.ask_gemini_json", side_effect=RuntimeError("boom")):
+            resp = client.post("/wines/research-all", follow_redirects=True)
+        assert resp.status_code == 200
+        assert b"Researched 0 wines" in resp.data
+        assert b"1 failed" in resp.data
+    finally:
+        os.environ.pop("GEMINI_API_KEY", None)
+
+
+def test_research_all_ignores_out_of_range_rating():
+    app = _app()
+    client = _logged_in_client(app)
+    client.post("/wines/new", data={"name": "Bad Data Wine", "quantity": "1"}, follow_redirects=True)
+
+    fake_result = {
+        "rating": 500,  # out of 1-100 range - should be rejected, not stored
+        "estimated_price": -10,  # negative - should be rejected
+        "drink_from": 2030,
+        "drink_by": 2020,  # from > by - should be rejected as a pair
+        "tasting_notes": "Fine.",
+    }
+
+    os.environ["GEMINI_API_KEY"] = "fake-key-for-test"
+    try:
+        with patch("app.wines.ask_gemini_json", return_value=fake_result):
+            client.post("/wines/research-all", follow_redirects=True)
+        with app.app_context():
+            wine = Wine.query.filter_by(name="Bad Data Wine").one()
+            assert wine.rating is None
+            assert wine.estimated_price is None
+            assert wine.drink_from is None and wine.drink_by is None
+            assert wine.tasting_profile == "Fine."  # the one valid field is still saved
+    finally:
+        os.environ.pop("GEMINI_API_KEY", None)
+
+
+# ---------------------------------------------------------------------------
 # Recipe Tracker
 # ---------------------------------------------------------------------------
 
@@ -999,6 +1100,226 @@ def test_delete_nonexistent_item_is_a_noop():
     client = _logged_in_client(app)
     resp = client.post("/grocery/999999999/delete", follow_redirects=True)
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Telegram bot webhook (TELEGRAM_BOT_TOKEN / TELEGRAM_WEBHOOK_SECRET are set
+# at the top of this file so telegram_enabled() is true for every test
+# below; _send_message is always mocked, so nothing here calls the real
+# Telegram API).
+# ---------------------------------------------------------------------------
+
+def _make_telegram_user(app, **kwargs):
+    with app.app_context():
+        user = User(email=f"pytest-{uuid.uuid4()}@example.com", **kwargs)
+        db.session.add(user)
+        db.session.commit()
+        return user.id
+
+
+def _post_telegram_update(client, text, chat_id=111, secret=TELEGRAM_SECRET):
+    headers = {}
+    if secret is not None:
+        headers["X-Telegram-Bot-Api-Secret-Token"] = secret
+    return client.post(
+        "/telegram/webhook",
+        json={"message": {"chat": {"id": chat_id}, "text": text}},
+        headers=headers,
+    )
+
+
+def _linked_telegram_client(app, chat_id):
+    user_id = _make_telegram_user(app, username=f"wineuser-{uuid.uuid4().hex[:8]}")
+    with app.app_context():
+        user = db.session.get(User, user_id)
+        user.telegram_chat_id = chat_id
+        db.session.commit()
+    return app.test_client(), user_id
+
+
+def test_webhook_rejects_missing_or_wrong_secret():
+    app = _app()
+    client = app.test_client()
+    resp = _post_telegram_update(client, "/help", secret="wrong-secret")
+    assert resp.status_code == 403
+
+    resp = _post_telegram_update(client, "/help", secret=None)
+    assert resp.status_code == 403
+
+
+def test_help_command_replies_without_needing_a_link():
+    app = _app()
+    client = app.test_client()
+    with patch("app.telegram_bot._send_message") as sent:
+        resp = _post_telegram_update(client, "/help", chat_id=222)
+    assert resp.status_code == 200
+    assert sent.called
+    chat_id, text = sent.call_args[0]
+    assert chat_id == 222
+    assert "/window" in text
+
+
+def test_unlinked_chat_is_told_to_link():
+    app = _app()
+    client = app.test_client()
+    with patch("app.telegram_bot._send_message") as sent:
+        _post_telegram_update(client, "/window", chat_id=333)
+    _, text = sent.call_args[0]
+    assert "/link" in text
+
+
+def test_link_flow_connects_chat_to_account():
+    app = _app()
+    user_id = _make_telegram_user(app, username=f"wineuser-{uuid.uuid4().hex[:8]}")
+    with app.app_context():
+        user = db.session.get(User, user_id)
+        user.telegram_link_code = "ABC123"
+        user.telegram_link_code_expires = datetime.utcnow() + timedelta(minutes=10)
+        db.session.commit()
+
+    client = app.test_client()
+    with patch("app.telegram_bot._send_message") as sent:
+        _post_telegram_update(client, "/link ABC123", chat_id=444)
+    _, text = sent.call_args[0]
+    assert "Linked!" in text
+
+    with app.app_context():
+        user = db.session.get(User, user_id)
+        assert user.telegram_chat_id == 444
+        assert user.telegram_link_code is None
+
+
+def test_link_rejects_expired_code():
+    app = _app()
+    user_id = _make_telegram_user(app, username=f"wineuser-{uuid.uuid4().hex[:8]}")
+    with app.app_context():
+        user = db.session.get(User, user_id)
+        user.telegram_link_code = "STALE1"
+        user.telegram_link_code_expires = datetime.utcnow() - timedelta(minutes=1)
+        db.session.commit()
+
+    client = app.test_client()
+    with patch("app.telegram_bot._send_message") as sent:
+        _post_telegram_update(client, "/link STALE1", chat_id=555)
+    _, text = sent.call_args[0]
+    assert "invalid or expired" in text
+
+
+def test_add_command_creates_wine():
+    app = _app()
+    client, user_id = _linked_telegram_client(app, chat_id=666)
+
+    with patch("app.telegram_bot._send_message") as sent:
+        _post_telegram_update(client, "/add TG Opus One | Telegram Winery | 2018 | red | 2", chat_id=666)
+    _, text = sent.call_args[0]
+    assert "Added #" in text
+    assert "TG Opus One" in text
+
+    with app.app_context():
+        wine = Wine.query.filter_by(user_id=user_id, name="TG Opus One").one()
+        assert wine.producer == "Telegram Winery"
+        assert wine.vintage == 2018
+        assert wine.wine_type == "red"
+        assert wine.quantity == 2
+
+
+def test_add_command_with_only_a_name():
+    app = _app()
+    client, user_id = _linked_telegram_client(app, chat_id=667)
+
+    with patch("app.telegram_bot._send_message"):
+        _post_telegram_update(client, "/add Mystery Bottle", chat_id=667)
+
+    with app.app_context():
+        wine = Wine.query.filter_by(user_id=user_id, name="Mystery Bottle").one()
+        assert wine.quantity == 1
+        assert wine.producer is None
+
+
+def test_window_command_lists_only_wines_in_range():
+    app = _app()
+    client, user_id = _linked_telegram_client(app, chat_id=777)
+    year = datetime.utcnow().year
+
+    with app.app_context():
+        db.session.add_all([
+            Wine(user_id=user_id, name="In Window", quantity=1, drink_from=year - 1, drink_by=year + 1),
+            Wine(user_id=user_id, name="Too Young", quantity=1, drink_from=year + 5, drink_by=year + 10),
+            Wine(user_id=user_id, name="No Window Set", quantity=1),
+        ])
+        db.session.commit()
+
+    with patch("app.telegram_bot._send_message") as sent:
+        _post_telegram_update(client, "/window", chat_id=777)
+    _, text = sent.call_args[0]
+    assert "In Window" in text
+    assert "Too Young" not in text
+    assert "No Window Set" not in text
+
+
+def test_notes_and_log_commands():
+    app = _app()
+    client, user_id = _linked_telegram_client(app, chat_id=888)
+
+    with app.app_context():
+        wine = Wine(user_id=user_id, name="TG Sancerre", quantity=3, rating=90)
+        db.session.add(wine)
+        db.session.commit()
+        wine_id = wine.id
+
+    with patch("app.telegram_bot._send_message") as sent:
+        _post_telegram_update(client, "/notes TG Sancerre", chat_id=888)
+    _, text = sent.call_args[0]
+    assert "90/100" in text
+
+    with patch("app.telegram_bot._send_message") as sent:
+        _post_telegram_update(client, "/log TG Sancerre | 88 | Great with oysters", chat_id=888)
+    _, text = sent.call_args[0]
+    assert "88/100" in text
+
+    with app.app_context():
+        wine = db.session.get(Wine, wine_id)
+        assert wine.quantity == 2  # decremented
+        tasting = TastingNote.query.filter_by(wine_id=wine_id).one()
+        assert tasting.score == 88
+        assert tasting.notes == "Great with oysters"
+
+
+def test_ambiguous_query_lists_candidates_with_ids():
+    app = _app()
+    client, user_id = _linked_telegram_client(app, chat_id=999)
+
+    with app.app_context():
+        db.session.add_all([
+            Wine(user_id=user_id, name="Cabernet A", quantity=1),
+            Wine(user_id=user_id, name="Cabernet B", quantity=1),
+        ])
+        db.session.commit()
+
+    with patch("app.telegram_bot._send_message") as sent:
+        _post_telegram_update(client, "/notes Cabernet", chat_id=999)
+    _, text = sent.call_args[0]
+    assert "Multiple matches" in text
+    assert "Cabernet A" in text and "Cabernet B" in text
+
+
+def test_add_command_cannot_touch_another_users_cellar():
+    app = _app()
+    client_a, user_a = _linked_telegram_client(app, chat_id=1001)
+    client_b, user_b = _linked_telegram_client(app, chat_id=1002)
+
+    with patch("app.telegram_bot._send_message"):
+        _post_telegram_update(client_a, "/add TG Private Bottle", chat_id=1001)
+
+    with app.app_context():
+        wine = Wine.query.filter_by(name="TG Private Bottle").one()
+        assert wine.user_id == user_a
+        assert wine.user_id != user_b
+
+    with patch("app.telegram_bot._send_message") as sent:
+        _post_telegram_update(client_b, "/notes TG Private Bottle", chat_id=1002)
+    _, text = sent.call_args[0]
+    assert "No wine found" in text
 
 
 # ---------------------------------------------------------------------------
