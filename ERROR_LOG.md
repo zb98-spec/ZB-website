@@ -187,6 +187,35 @@ per the instructions for this pass.
 
 ---
 
+## Finding 4 — `datetime.utcnow()` is deprecated on the Python version CI runs
+
+- **Severity:** Low today (still works everywhere it's used), but a
+  forward-compatibility risk — flagged because it surfaced as 120 warnings
+  in the PR #2 CI run (`.github/workflows/deploy.yml`, which runs Python
+  3.12; the pinned dev environment for this pass ran 3.11, where the same
+  warning also fires but wasn't specifically inspected until CI reported
+  it).
+- **Where:** every call site in the app uses the naive, deprecated form
+  instead of `datetime.now(datetime.UTC)`:
+  - `app/models.py:21,80,103,112,163,178` — six `db.Column(..., default=datetime.utcnow)`
+    timestamp defaults (`created_at` on `User`, `Wine`, `TastingNote`,
+    `Recipe`, `RecipeComment`, `GroceryItem`).
+  - `app/auth.py:143,151` — login-lockout window checks.
+  - `app/auth.py:208,223` — Telegram link-code expiry.
+  - `app/wines.py:223` — `researched_at` timestamp on AI wine research.
+  - `app/telegram_bot.py:113` — link-code expiry check on the bot side.
+
+Python's `datetime.datetime.utcnow()` has been deprecated since Python
+3.12 ("use timezone-aware objects... `datetime.now(datetime.UTC)`
+instead") and is scheduled for removal in a future Python version. It
+still works today and produces correct naive-UTC values that match the
+naive `db.DateTime` columns storing them, so nothing is broken yet — but
+every one of these call sites will need to move to a timezone-aware
+equivalent (and the column type reconsidered alongside it) before Python
+drops the naive form. No fix applied, per the instructions for this pass.
+
+---
+
 ## Everything else: passing
 
 The remaining 82 tests — 9 in `tests/test_unit.py`, 71 in
@@ -194,3 +223,31 @@ The remaining 82 tests — 9 in `tests/test_unit.py`, 71 in
 `tests/test_e2e.py` — pass consistently on a freshly migrated database.
 See `TEST_PLAN.md` §3 for what each file covers and §5 for when to run
 which tier.
+
+---
+
+## Repo-state note (not a code defect, but affects "is this up to date?")
+
+While auditing branch/PR state for this update, found: the branch behind
+the already-**merged and closed** PR #1 (`claude/project-hub-website-auth-8lqf7g`)
+received a new commit (`2f0ede1`, "Make AI research selective and
+reviewable, not automatic") *after* that PR closed. It's not on `main`,
+and it's not attached to any open PR — it's sitting on an orphaned branch.
+
+That commit substantially redesigns the AI wine-research feature this
+pass wrote tests for: it removes the `POST /wines/research-all` route
+entirely (the one `test_research_all_updates_wine_fields`,
+`test_research_all_counts_failures_without_crashing`, and
+`test_research_all_ignores_out_of_range_rating` in
+`tests/test_integration.py` exercise) and replaces it with a two-step
+`POST /wines/research/preview` → `POST /wines/research/apply` flow, plus
+its own rewritten `tests/test_ai_research.py` (not the tiered structure
+this pass uses).
+
+Net effect: the 3 AI-research tests in this pass's `test_integration.py`
+correctly describe the feature as it exists on `main` **today**, but will
+break the moment that other, currently-unmerged commit lands - because the
+route they call will no longer exist. Flagging this rather than acting on
+it: merging or rewriting around someone else's in-flight, unopened work is
+outside this pass's scope. See the chat response accompanying this update
+for the specific question this raises.
