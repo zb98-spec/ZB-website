@@ -16,4 +16,7 @@ USER appuser
 ENV PORT=8080
 EXPOSE 8080
 
-CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT} --workers 2 wsgi:app"]
+# --timeout 120: the "Research all with AI" bulk action makes up to 15
+# sequential Gemini calls in one request, which can run past gunicorn's
+# 30s default worker timeout.
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT} --workers 2 --timeout 120 wsgi:app"]

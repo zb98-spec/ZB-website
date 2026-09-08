@@ -19,17 +19,24 @@ waiting on the values.
   Gmail app password (`MAIL_SERVER` / `MAIL_USERNAME` / `MAIL_PASSWORD`).
   Without it, "forgot password" stays hidden (change-password while
   logged in still works). See README §5.
-- [ ] **Gemini API key for the Wine Assistant chat bot** — free key at
-  aistudio.google.com/apikey (`GEMINI_API_KEY`). Without it, the chat
-  link on the Wine Library page stays hidden. See README §6.
+- [ ] **Gemini API key** — free key at aistudio.google.com/apikey
+  (`GEMINI_API_KEY`). Powers both the Wine Assistant chat bot and the
+  "Research all with AI" button; without it, both stay hidden.
+  See README §6.
+- [ ] **Telegram bot token + webhook secret** — create a bot via
+  @BotFather for `TELEGRAM_BOT_TOKEN`; make up any random string for
+  `TELEGRAM_WEBHOOK_SECRET`. Needs a real deployed HTTPS URL to finish
+  setup (`scripts/set_telegram_webhook.sh`), so this one has to come
+  after the first real deploy, not before. See README §7.
 - [ ] **GCP project + CI/CD wiring** — run `scripts/setup_gcp_ci.sh`
   once (needs `gcloud auth login` and a GCP project) and add the 6
-  printed values as GitHub repo secrets. See README §8.
+  printed values as GitHub repo secrets. See README §9.
 - [ ] **First real deploy** — once the above are in place, a push to
-  `main` deploys automatically. Worth a live smoke test afterward
-  (hit the Cloud Run URL, try registering an account, try the Wine
-  Assistant if Gemini is configured) to confirm it's actually working
-  end to end, not just green in CI.
+  `main` deploys automatically. Worth a live smoke test afterward (hit
+  the Cloud Run URL, register an account, try the Wine Assistant/AI
+  research if Gemini is configured, then run
+  `set_telegram_webhook.sh` and try `/start` on the bot) to confirm
+  it's actually working end to end, not just green in CI.
 
 ## Ideas for later
 
@@ -52,3 +59,9 @@ aren't needed yet.
 - [ ] **Recipe ingredient parsing from pasted text** — right now each
   ingredient is entered into its own quantity/unit/name fields; pasting
   a whole ingredient list and auto-splitting it would be faster to use.
+- [ ] **AI research background job** — the "Research all with AI" button
+  processes up to 15 wines synchronously in one request (no job queue
+  exists yet); fine for a personal cellar, would need rework for a much
+  larger one or to remove the 15-per-click cap.
+- [ ] **Telegram bot: more commands** — e.g. editing/deleting a bottle,
+  or listing the full cellar, not just what's in its drinking window.

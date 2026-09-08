@@ -1,6 +1,8 @@
 import json
 import os
 import re
+import secrets
+import string
 import time
 from datetime import datetime, timedelta
 
@@ -14,6 +16,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from .extensions import csrf, db
 from .mail import mail_enabled, send_email
 from .models import OAuthAccount, User
+from .telegram_bot import telegram_enabled
 
 auth_bp = Blueprint("auth", __name__)
 oauth = OAuth()
@@ -23,6 +26,13 @@ USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,80}$")
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_DURATION = timedelta(minutes=15)
 RESET_TOKEN_MAX_AGE = 1800  # 30 minutes
+
+TELEGRAM_LINK_CODE_TTL = timedelta(minutes=10)
+TELEGRAM_CODE_CHARS = string.ascii_uppercase + string.digits
+
+
+def _generate_telegram_link_code() -> str:
+    return "".join(secrets.choice(TELEGRAM_CODE_CHARS) for _ in range(6))
 
 
 def _make_reset_token(user_id: int) -> str:
@@ -193,9 +203,28 @@ def account():
                 db.session.commit()
                 flash("Password updated.")
 
+        elif action == "generate_telegram_code":
+            current_user.telegram_link_code = _generate_telegram_link_code()
+            current_user.telegram_link_code_expires = datetime.utcnow() + TELEGRAM_LINK_CODE_TTL
+            db.session.commit()
+
+        elif action == "unlink_telegram":
+            current_user.telegram_chat_id = None
+            current_user.telegram_link_code = None
+            current_user.telegram_link_code_expires = None
+            db.session.commit()
+            flash("Telegram unlinked.")
+
         return redirect(url_for("auth.account"))
 
-    return render_template("account.html")
+    telegram_code_active = bool(
+        current_user.telegram_link_code
+        and current_user.telegram_link_code_expires
+        and current_user.telegram_link_code_expires > datetime.utcnow()
+    )
+    return render_template(
+        "account.html", telegram_enabled=telegram_enabled(), telegram_code_active=telegram_code_active
+    )
 
 
 @auth_bp.route("/forgot-password", methods=["GET", "POST"])

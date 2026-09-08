@@ -5,12 +5,28 @@ from flask import Blueprint, abort, flash, redirect, render_template, request, u
 from flask_login import current_user, login_required
 
 from .extensions import db
-from .gemini import ask_gemini, gemini_enabled
+from .gemini import ask_gemini, ask_gemini_json, gemini_enabled
 from .models import TastingNote, Wine
 
 wines_bp = Blueprint("wines", __name__, url_prefix="/wines")
 
 WINE_TYPES = ["red", "white", "rosé", "sparkling", "dessert", "fortified"]
+
+# No background job queue here, so a bulk research run has to fit inside one
+# HTTP request/gunicorn worker timeout - cap how many wines it does per click.
+RESEARCH_BATCH_LIMIT = 15
+
+RESEARCH_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "rating": {"type": "INTEGER", "description": "Critic-style quality score, 1-100"},
+        "estimated_price": {"type": "NUMBER", "description": "Current typical retail price in USD"},
+        "drink_from": {"type": "INTEGER", "description": "Earliest recommended drinking year"},
+        "drink_by": {"type": "INTEGER", "description": "Latest recommended drinking year"},
+        "tasting_notes": {"type": "STRING", "description": "2-3 sentences: aroma, palate, food pairings"},
+    },
+    "required": ["rating", "estimated_price", "drink_from", "drink_by", "tasting_notes"],
+}
 
 
 def _get_owned_wine(wine_id: int) -> Wine:
@@ -61,7 +77,7 @@ def list_wines():
         .order_by(Wine.producer, Wine.vintage)
         .all()
     )
-    return render_template("wines/list.html", wines=wines, chat_enabled=gemini_enabled())
+    return render_template("wines/list.html", wines=wines, ai_enabled=gemini_enabled())
 
 
 @wines_bp.route("/new", methods=["GET", "POST"])
@@ -157,6 +173,94 @@ def delete_tasting(wine_id, tasting_id):
     db.session.commit()
     flash("Tasting note removed.")
     return redirect(url_for("wines.wine_detail", wine_id=wine.id))
+
+
+def _research_prompt(wine: Wine) -> str:
+    details = [wine.name]
+    details.append(f"producer: {wine.producer}" if wine.producer else "producer: unknown")
+    details.append(f"vintage: {wine.vintage}" if wine.vintage else "non-vintage")
+    if wine.wine_type:
+        details.append(f"type: {wine.wine_type}")
+    if wine.varietal:
+        details.append(f"varietal: {wine.varietal}")
+    if wine.region:
+        details.append(f"region: {wine.region}")
+    if wine.country:
+        details.append(f"country: {wine.country}")
+
+    return (
+        "You are a wine expert helping research a bottle for a home cellar "
+        "tracker. Give your best-informed estimate for every field below, "
+        "even if you don't have exact data on this specific wine - never "
+        "leave a field blank, use your general knowledge of the producer/"
+        "region/varietal/vintage to make a reasonable estimate instead.\n\n"
+        f"Wine: {', '.join(details)}"
+    )
+
+
+def _apply_research(wine: Wine, data: dict) -> None:
+    rating = data.get("rating")
+    if isinstance(rating, (int, float)) and 1 <= rating <= 100:
+        wine.rating = int(rating)
+
+    price = data.get("estimated_price")
+    if isinstance(price, (int, float)) and price >= 0:
+        wine.estimated_price = Decimal(str(round(float(price), 2)))
+
+    drink_from, drink_by = data.get("drink_from"), data.get("drink_by")
+    if (
+        isinstance(drink_from, (int, float))
+        and isinstance(drink_by, (int, float))
+        and drink_from <= drink_by
+    ):
+        wine.drink_from = int(drink_from)
+        wine.drink_by = int(drink_by)
+
+    notes = data.get("tasting_notes")
+    if isinstance(notes, str) and notes.strip():
+        wine.tasting_profile = notes.strip()
+
+    wine.researched_at = datetime.utcnow()
+
+
+@wines_bp.route("/research-all", methods=["POST"])
+@login_required
+def research_all():
+    if not gemini_enabled():
+        flash("AI research isn't configured yet.")
+        return redirect(url_for("wines.list_wines"))
+
+    candidates = (
+        Wine.query.filter_by(user_id=current_user.id)
+        .order_by(Wine.id)
+        .limit(RESEARCH_BATCH_LIMIT + 1)
+        .all()
+    )
+    if not candidates:
+        flash("No wines to research yet.")
+        return redirect(url_for("wines.list_wines"))
+
+    more_remaining = len(candidates) > RESEARCH_BATCH_LIMIT
+    batch = candidates[:RESEARCH_BATCH_LIMIT]
+
+    succeeded = failed = 0
+    for wine in batch:
+        try:
+            data = ask_gemini_json(_research_prompt(wine), RESEARCH_SCHEMA)
+            _apply_research(wine, data)
+            succeeded += 1
+        except RuntimeError:
+            failed += 1
+
+    db.session.commit()
+
+    message = f"Researched {succeeded} wine{'s' if succeeded != 1 else ''}."
+    if failed:
+        message += f" {failed} failed."
+    if more_remaining:
+        message += " Click again to research the rest."
+    flash(message)
+    return redirect(url_for("wines.list_wines"))
 
 
 def _cellar_summary(user_id: int) -> str:

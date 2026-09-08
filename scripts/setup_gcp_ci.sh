@@ -117,10 +117,12 @@ fi
 create_or_update_secret database-url "$DATABASE_URL"
 
 echo "==> Creating empty placeholders for not-yet-configured optional features"
-echo "    (Google/Apple OAuth, email for password reset, Gemini chat bot)"
+echo "    (Google/Apple OAuth, email for password reset, Gemini AI features,"
+echo "    Telegram bot)"
 for NAME in google-client-id google-client-secret apple-client-id apple-team-id \
             apple-key-id apple-private-key mail-server mail-username \
-            mail-password gemini-api-key; do
+            mail-password gemini-api-key telegram-bot-token \
+            telegram-webhook-secret; do
   create_secret_if_missing "$NAME"
 done
 echo "    Fill any of these in later with:"
