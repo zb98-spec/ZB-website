@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block content %}
+{% if current_user.is_authenticated %}
+  <h1>Welcome back{% if current_user.name %}, {{ current_user.name }}{% endif %}</h1>
+  <p class="muted">Here's everything you've got running in one place.</p>
+
+  <ul class="project-list">
+    {% for project in projects %}
+      <li>
+        <a href="{{ url_for(project.endpoint) }}">{{ project.name }}</a>
+        <p class="muted">{{ project.description }}</p>
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <section class="hero">
+    <h1>One place for everything you build.</h1>
+    <p>ZB Hub is the central launchpad for all of my projects &mdash; sign in once, jump into anything.</p>
+    <a class="btn btn-primary" href="{{ url_for('auth.login_page') }}">Get started</a>
+  </section>
+{% endif %}
+{% endblock %}

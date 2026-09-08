@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Account</h1>
+<p class="muted">Signed in as {{ current_user.username or current_user.name or current_user.email }}</p>
+
+<h2>Email</h2>
+<p class="muted">
+  Used for password reset links.
+  {% if not current_user.email %}You don't have one on file yet.{% endif %}
+</p>
+<form method="post" class="wine-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="action" value="update_email">
+  <label>Email
+    <input type="email" name="email" value="{{ current_user.email or '' }}">
+  </label>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Save email</button>
+  </div>
+</form>
+
+<h2>Password</h2>
+<form method="post" class="wine-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="action" value="change_password">
+  {% if current_user.password_hash %}
+    <label>Current password
+      <input type="password" name="current_password" required>
+    </label>
+  {% else %}
+    <p class="muted">You signed up with Google/Apple and don't have a password yet - set one below to also be able to sign in with a username and password.</p>
+    <label>Choose a username
+      <input type="text" name="username" required>
+    </label>
+  {% endif %}
+  <label>New password
+    <input type="password" name="new_password" required minlength="8">
+  </label>
+  <label>Confirm new password
+    <input type="password" name="confirm_new_password" required minlength="8">
+  </label>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">{{ "Change password" if current_user.password_hash else "Set password" }}</button>
+  </div>
+</form>
+
+{% if telegram_enabled %}
+  <h2>Telegram bot</h2>
+  {% if current_user.telegram_chat_id %}
+    <p class="muted">This account is linked to a Telegram chat.</p>
+    <form method="post" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="unlink_telegram">
+      <button type="submit" class="btn btn-ghost">Unlink Telegram</button>
+    </form>
+  {% elif telegram_code_active %}
+    <p class="muted">
+      Send this to the bot within 10 minutes:
+      <strong>/link {{ current_user.telegram_link_code }}</strong>
+    </p>
+    <form method="post" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="generate_telegram_code">
+      <button type="submit" class="btn btn-ghost">Generate a new code</button>
+    </form>
+  {% else %}
+    <p class="muted">Link this account to use the wine cellar bot on Telegram.</p>
+    <form method="post" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="generate_telegram_code">
+      <button type="submit" class="btn btn-primary">Get a link code</button>
+    </form>
+  {% endif %}
+{% endif %}
+{% endblock %}

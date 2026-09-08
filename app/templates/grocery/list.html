@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Grocery List</h1>
+  {% if items %}
+    <form action="{{ url_for('grocery.clear_list') }}" method="post" class="inline-form"
+          onsubmit="return confirm('Clear the entire list?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-ghost">Clear list</button>
+    </form>
+  {% endif %}
+</div>
+<p class="muted">Shared by everyone signed in to ZB Hub.</p>
+
+<form method="post" action="{{ url_for('grocery.add_item') }}" class="form-row" style="max-width: 30rem; align-items: flex-end; margin: 1.25rem 0;">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label>Item
+    <input type="text" name="name" required autofocus>
+  </label>
+  <label>Quantity
+    <input type="text" name="quantity" placeholder="optional">
+  </label>
+  <button type="submit" class="btn btn-primary">Add</button>
+</form>
+
+{% if items %}
+  <div class="table-wrap">
+    <table class="wine-table">
+      <thead>
+        <tr><th>Item</th><th>Quantity</th><th>Added by</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr>
+          <td>{{ item.name }}</td>
+          <td>{{ item.quantity or "—" }}</td>
+          <td>{% if item.added_by %}{{ item.added_by.username or item.added_by.name or item.added_by.email }}{% else %}—{% endif %}</td>
+          <td class="actions">
+            <form action="{{ url_for('grocery.delete_item', item_id=item.id) }}" method="post" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="link-btn">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="empty-state">
+    <p>The list is empty.</p>
+  </div>
+{% endif %}
+{% endblock %}

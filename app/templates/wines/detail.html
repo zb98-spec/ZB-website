@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ wine.name }}</h1>
+    <p class="muted">
+      {% if wine.producer %}{{ wine.producer }} &middot; {% endif %}{{ wine.vintage or "NV" }}
+      {%- if wine.region %} &middot; {{ wine.region }}{% if wine.country %}, {{ wine.country }}{% endif %}{% endif %}
+    </p>
+  </div>
+  <a class="btn btn-ghost" href="{{ url_for('wines.edit_wine', wine_id=wine.id) }}">Edit wine</a>
+</div>
+
+<p class="muted">
+  {{ wine.quantity }} bottle{{ "s" if wine.quantity != 1 else "" }} in cellar
+  {%- if wine.wine_type %} &middot; {{ wine.wine_type }}{% endif %}
+  {%- if wine.rating %} &middot; {{ wine.rating }}/100{% endif %}
+  {%- if wine.drink_from or wine.drink_by %} &middot; drink {{ wine.drink_from or "?" }}&ndash;{{ wine.drink_by or "?" }}{% endif %}
+  {%- if wine.estimated_price %} &middot; est. ${{ "%.2f"|format(wine.estimated_price) }}{% endif %}
+</p>
+
+{% if wine.tasting_profile %}
+  <h2>Tasting notes</h2>
+  <p>{{ wine.tasting_profile }}</p>
+  <p class="muted" style="font-size: 0.8rem;">
+    AI-researched{% if wine.researched_at %}, last updated {{ wine.researched_at.strftime("%b %-d, %Y") }}{% endif %}.
+    Your own notes: {{ wine.notes or "none" }}
+  </p>
+{% elif wine.notes %}
+  <h2>Notes</h2>
+  <p>{{ wine.notes }}</p>
+{% endif %}
+
+<div class="page-header">
+  <h2>Tasting history</h2>
+  <a class="btn btn-primary" href="{{ url_for('wines.new_tasting', wine_id=wine.id) }}">+ Log tasting</a>
+</div>
+
+{% if wine.tastings %}
+  <div class="table-wrap">
+    <table class="wine-table">
+      <thead>
+        <tr><th>Date</th><th>Score</th><th>Occasion</th><th>People</th><th>Notes</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for tasting in wine.tastings %}
+        <tr>
+          <td>{{ tasting.tasted_on.strftime("%b %-d, %Y") }}</td>
+          <td>{{ tasting.score }}</td>
+          <td>{{ tasting.occasion or "—" }}</td>
+          <td>{{ tasting.people or "—" }}</td>
+          <td>{{ tasting.notes or "—" }}</td>
+          <td class="actions">
+            <form action="{{ url_for('wines.delete_tasting', wine_id=wine.id, tasting_id=tasting.id) }}" method="post" class="inline-form"
+                  onsubmit="return confirm('Delete this tasting note?');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="link-btn">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="empty-state">
+    <p>No tastings logged yet.</p>
+  </div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Wine Library</h1>
+  <div>
+    {% if ai_enabled %}
+      <a class="btn btn-ghost" href="{{ url_for('wines.chat') }}">Ask the Wine Assistant</a>
+      {% if wines %}
+        <form action="{{ url_for('wines.research_all') }}" method="post" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-ghost">Research all with AI</button>
+        </form>
+      {% endif %}
+    {% endif %}
+    <a class="btn btn-primary" href="{{ url_for('wines.new_wine') }}">+ Add wine</a>
+  </div>
+</div>
+
+{% if wines %}
+  <div class="table-wrap">
+    <table class="wine-table">
+      <thead>
+        <tr>
+          <th>Wine</th>
+          <th>Vintage</th>
+          <th>Type</th>
+          <th>Region</th>
+          <th>Qty</th>
+          <th>Rating</th>
+          <th>Drink window</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for wine in wines %}
+        <tr>
+          <td>
+            <a href="{{ url_for('wines.wine_detail', wine_id=wine.id) }}"><strong>{{ wine.name }}</strong></a>
+            {% if wine.producer %}<br><span class="muted">{{ wine.producer }}</span>{% endif %}
+          </td>
+          <td>{{ wine.vintage or "NV" }}</td>
+          <td>{{ wine.wine_type or "—" }}</td>
+          <td>{{ wine.region or "—" }}{% if wine.country %}, {{ wine.country }}{% endif %}</td>
+          <td>{{ wine.quantity }}</td>
+          <td>{{ wine.rating or "—" }}</td>
+          <td>
+            {% if wine.drink_from or wine.drink_by %}
+              {{ wine.drink_from or "?" }}&ndash;{{ wine.drink_by or "?" }}
+            {% else %}
+              &mdash;
+            {% endif %}
+          </td>
+          <td class="actions">
+            <a class="btn btn-primary btn-sm" href="{{ url_for('wines.new_tasting', wine_id=wine.id) }}">Log tasting</a>
+            <a href="{{ url_for('wines.edit_wine', wine_id=wine.id) }}">Edit</a>
+            <form action="{{ url_for('wines.delete_wine', wine_id=wine.id) }}" method="post" class="inline-form"
+                  onsubmit="return confirm('Remove this wine from your cellar?');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="link-btn">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="empty-state">
+    <p>Your cellar is empty. Add your first bottle.</p>
+  </div>
+{% endif %}
+{% endblock %}

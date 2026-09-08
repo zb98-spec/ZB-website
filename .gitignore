@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# env files
+.env
+.env.*.local
+
+# misc
+.DS_Store

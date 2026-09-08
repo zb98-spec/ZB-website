@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>{{ "Edit wine" if wine else "Add a wine" }}</h1>
+
+<form method="post" class="wine-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label>Name*
+    <input type="text" name="name" required value="{{ wine.name if wine else '' }}">
+  </label>
+  <label>Producer
+    <input type="text" name="producer" value="{{ wine.producer if wine and wine.producer else '' }}">
+  </label>
+
+  <div class="form-row">
+    <label>Vintage
+      <input type="number" name="vintage" value="{{ wine.vintage if wine and wine.vintage else '' }}" placeholder="blank = NV">
+    </label>
+    <label>Type
+      <select name="wine_type">
+        <option value="">&mdash;</option>
+        {% for t in wine_types %}
+          <option value="{{ t }}" {% if wine and wine.wine_type == t %}selected{% endif %}>{{ t|capitalize }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <div class="form-row">
+    <label>Varietal
+      <input type="text" name="varietal" value="{{ wine.varietal if wine and wine.varietal else '' }}">
+    </label>
+    <label>Region
+      <input type="text" name="region" value="{{ wine.region if wine and wine.region else '' }}">
+    </label>
+    <label>Country
+      <input type="text" name="country" value="{{ wine.country if wine and wine.country else '' }}">
+    </label>
+  </div>
+
+  <div class="form-row">
+    <label>Quantity
+      <input type="number" name="quantity" min="0" value="{{ wine.quantity if wine else 1 }}">
+    </label>
+    <label>Purchase price
+      <input type="number" step="0.01" min="0" name="purchase_price" value="{{ wine.purchase_price if wine and wine.purchase_price else '' }}">
+    </label>
+    <label>Rating (1-100)
+      <input type="number" min="1" max="100" name="rating" value="{{ wine.rating if wine and wine.rating else '' }}">
+    </label>
+  </div>
+
+  <div class="form-row">
+    <label>Drink from (year)
+      <input type="number" name="drink_from" value="{{ wine.drink_from if wine and wine.drink_from else '' }}">
+    </label>
+    <label>Drink by (year)
+      <input type="number" name="drink_by" value="{{ wine.drink_by if wine and wine.drink_by else '' }}">
+    </label>
+  </div>
+
+  <label>Notes
+    <textarea name="notes" rows="3">{{ wine.notes if wine and wine.notes else '' }}</textarea>
+  </label>
+
+  <div class="form-actions">
+    <a class="btn btn-ghost" href="{{ url_for('wines.list_wines') }}">Cancel</a>
+    <button type="submit" class="btn btn-primary">{{ "Save changes" if wine else "Add to cellar" }}</button>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>{{ "Edit recipe" if recipe else "Add a recipe" }}</h1>
+
+<form method="post" class="wine-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label>Recipe name*
+    <input type="text" name="name" required value="{{ recipe.name if recipe else '' }}">
+  </label>
+  <label>Servings
+    <input type="number" name="servings" min="1" value="{{ recipe.servings if recipe else 4 }}">
+  </label>
+
+  <h2>Ingredients</h2>
+  <p class="muted">Leave rows blank to skip them.</p>
+  {% for i in ingredient_rows %}
+    {% set ingredient = recipe.ingredients[i] if recipe and i < recipe.ingredients|length else None %}
+    <div class="form-row">
+      <label>Qty
+        <input type="text" name="ingredient_qty[]" inputmode="decimal"
+               value="{{ ingredient.quantity|format_qty if ingredient else '' }}">
+      </label>
+      <label>Unit
+        <input type="text" name="ingredient_unit[]" {% if loop.first %}placeholder="cup, g, tbsp..."{% endif %}
+               value="{{ ingredient.unit if ingredient and ingredient.unit else '' }}">
+      </label>
+      <label>Ingredient
+        <input type="text" name="ingredient_name[]" {% if loop.first %}placeholder="flour"{% endif %}
+               value="{{ ingredient.name if ingredient else '' }}">
+      </label>
+    </div>
+  {% endfor %}
+
+  <h2>Steps</h2>
+  <p class="muted">Leave rows blank to skip them. Order matters.</p>
+  {% for i in step_rows %}
+    {% set step = recipe.steps[i] if recipe and i < recipe.steps|length else None %}
+    <label>Step {{ i + 1 }}
+      <textarea name="step[]" rows="2">{{ step.instruction if step else '' }}</textarea>
+    </label>
+  {% endfor %}
+
+  <div class="form-actions">
+    <a class="btn btn-ghost" href="{{ url_for('recipes.list_recipes') }}">Cancel</a>
+    <button type="submit" class="btn btn-primary">{{ "Save changes" if recipe else "Save recipe" }}</button>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+  <h1>{{ recipe.name }}</h1>
+  <a class="btn btn-ghost" href="{{ url_for('recipes.edit_recipe', recipe_id=recipe.id) }}">Edit recipe</a>
+</div>
+
+<form method="get" class="form-row" style="max-width: 16rem; align-items: flex-end;">
+  <label>Servings
+    <input type="number" name="servings" min="1" value="{{ requested_servings }}">
+  </label>
+  <button type="submit" class="btn btn-sm">Scale</button>
+</form>
+<p class="muted">
+  Base recipe makes {{ recipe.servings }} serving{{ "s" if recipe.servings != 1 else "" }}.
+  Showing quantities for {{ requested_servings }}.
+</p>
+
+<h2>Ingredients</h2>
+{% if scaled_ingredients %}
+  <ul class="project-list">
+    {% for ingredient, qty_display in scaled_ingredients %}
+      <li>{% if qty_display %}{{ qty_display }}{% if ingredient.unit %} {{ ingredient.unit }}{% endif %} &mdash; {% endif %}{{ ingredient.name }}</li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p class="muted">No ingredients listed.</p>
+{% endif %}
+
+{% if recipe.ingredients %}
+<form method="post" action="{{ url_for('recipes.add_to_grocery_list', recipe_id=recipe.id) }}" class="inline-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="servings" value="{{ requested_servings }}">
+  <button type="submit" class="btn btn-primary">Add ingredients to grocery list</button>
+</form>
+{% endif %}
+
+<h2>Steps</h2>
+{% if recipe.steps %}
+  <ol>
+    {% for step in recipe.steps %}
+      <li>{{ step.instruction }}</li>
+    {% endfor %}
+  </ol>
+{% else %}
+  <p class="muted">No steps listed.</p>
+{% endif %}
+
+<h2>Comments</h2>
+<form method="post" action="{{ url_for('recipes.add_comment', recipe_id=recipe.id) }}" class="wine-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="servings" value="{{ requested_servings }}">
+  <label>Add a comment
+    <textarea name="body" rows="2" required></textarea>
+  </label>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Add comment</button>
+  </div>
+</form>
+
+{% if recipe.comments %}
+  <ul class="project-list">
+    {% for comment in recipe.comments %}
+      <li>
+        <p>{{ comment.body }}</p>
+        <p class="muted">{{ comment.created_at.strftime("%b %-d, %Y") }}</p>
+        <form action="{{ url_for('recipes.delete_comment', recipe_id=recipe.id, comment_id=comment.id) }}" method="post" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="link-btn">Delete</button>
+        </form>
+      </li>
+    {% endfor %}
+  </ul>
+{% endif %}
+{% endblock %}

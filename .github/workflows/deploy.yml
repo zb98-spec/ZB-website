@@ -1,0 +1,112 @@
+name: Test and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: zbhub
+          POSTGRES_PASSWORD: zbhub
+          POSTGRES_DB: zbhub
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U zbhub"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      FLASK_APP: wsgi.py
+      SECRET_KEY: test-secret
+      DATABASE_URL: postgresql://zbhub:zbhub@localhost:5432/zbhub
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - run: pip install -r requirements-dev.txt
+
+      - run: flask db upgrade
+
+      - run: pytest -q
+
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      REGION: ${{ secrets.GCP_REGION }}
+      PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      SERVICE: zb-hub
+      REPOSITORY: zb-hub
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push image
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${SERVICE}:${GITHUB_SHA}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Run database migrations against Neon
+        env:
+          FLASK_APP: wsgi.py
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          pip install -r requirements.txt
+          flask db upgrade
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE }}
+          region: ${{ env.REGION }}
+          image: ${{ env.IMAGE }}
+          flags: --allow-unauthenticated
+          secrets: |
+            SECRET_KEY=secret-key:latest
+            DATABASE_URL=database-url:latest
+            GOOGLE_CLIENT_ID=google-client-id:latest
+            GOOGLE_CLIENT_SECRET=google-client-secret:latest
+            APPLE_CLIENT_ID=apple-client-id:latest
+            APPLE_TEAM_ID=apple-team-id:latest
+            APPLE_KEY_ID=apple-key-id:latest
+            APPLE_PRIVATE_KEY=apple-private-key:latest
+            MAIL_SERVER=mail-server:latest
+            MAIL_USERNAME=mail-username:latest
+            MAIL_PASSWORD=mail-password:latest
+            GEMINI_API_KEY=gemini-api-key:latest
+            TELEGRAM_BOT_TOKEN=telegram-bot-token:latest
+            TELEGRAM_WEBHOOK_SECRET=telegram-webhook-secret:latest

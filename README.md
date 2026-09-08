@@ -1,1 +1,445 @@
-# ZB-website
+# ZB Hub
+
+A simple, central hub/landing page for personal projects, with account
+creation via username/password, or Google/Apple sign-in.
+
+- **Framework**: Flask (app factory + blueprints), server-rendered Jinja templates
+- **Auth**: username/password (Werkzeug password hashing, Flask-Login sessions,
+  DB-backed lockout after repeated failed logins, email-based password reset)
+  plus optional [Authlib](https://authlib.org) OAuth with Google and Apple
+- **Database**: PostgreSQL via Flask-SQLAlchemy + Flask-Migrate (Alembic)
+- **AI**: optional Gemini-powered wine chat bot + bulk "research my cellar" button
+- **Bot**: optional Telegram bot for checking/updating your wine cellar on the go
+- **Containerized**: Docker + docker-compose for local dev
+- **Deploy target**: Google Cloud Run
+
+## Structure
+
+```
+app/
+  __init__.py     app factory, wires up extensions and blueprints
+  extensions.py   db, migrate, login_manager, csrf singletons
+  models.py       User, OAuthAccount, Wine, TastingNote, Recipe,
+                   Ingredient, RecipeStep, RecipeComment, GroceryItem
+  auth.py         /login, /register, /account, forgot/reset password,
+                   OAuth redirect + callback, /logout
+  mail.py         SMTP helper for password-reset emails
+  gemini.py       Gemini REST API helper (chat bot + AI cellar research)
+  telegram_bot.py Telegram webhook + bot commands
+  main.py         welcome page / hub dashboard
+  wines.py        Wine Library CRUD + tasting log + chat bot + AI research
+  recipes.py      Recipe Tracker: recipes, scaling, comments
+  grocery.py      Grocery List (shared across all app users)
+  templates/
+  static/css/
+wsgi.py           entrypoint (`app = create_app()`), used by gunicorn/flask run
+migrations/       Alembic migrations (flask db migrate/upgrade)
+```
+
+## Pages
+
+- `/` — welcome page. Signed out: hero + "Get started". Signed in: a
+  dashboard of hub projects.
+- `/login` — sign-in page: a username/password form (works out of the box,
+  no setup needed) plus "Continue with Google"/"Continue with Apple"
+  buttons, shown disabled until those are configured (see §3 and §4), and
+  a "Forgot password?" link once email is configured (see §5).
+- `/register` — create an account with a username and password. Usernames
+  are 3-80 characters (letters, numbers, `_ . -`) and must be unique;
+  passwords need to be at least 8 characters. Registering logs you in
+  immediately — there's no email verification step.
+- `/account` — add/update your email (used for password reset) and change
+  your password. An OAuth-only account can set a username + password here
+  too, to also be able to sign in that way. Also where you link the
+  Telegram bot to your account (§7), once it's configured.
+- `/forgot-password`, `/reset-password/<token>` — request and complete an
+  email-based password reset. The reset link is a signed token good for 30
+  minutes. Only shown/usable once SMTP is configured (§5).
+- Logging in with the wrong password 5 times locks that account out for 15
+  minutes (tracked in the database, so it holds up across Cloud Run restarts
+  or multiple instances) — regardless of whether the 6th attempt is correct.
+
+### Wine Library (`/wines`)
+
+- Add, edit, delete, and list every bottle in your cellar (name, producer,
+  vintage, type, varietal, region, quantity, purchase price, rating,
+  drinking window, notes). Each user only sees their own wines. Each row
+  has a **Log tasting** button.
+- `/wines/<id>` — a wine's detail page: cellar info plus its tasting
+  history, newest-first.
+- `/wines/<id>/tastings/new` — log a tasting: date and score (1-100) are
+  required; occasion, people, and notes are optional. Optionally
+  decrements the wine's cellar quantity by one (checked by default, since
+  logging a tasting usually means a bottle got opened).
+- `/wines/chat` — **Wine Assistant**: ask a free-text question and get an
+  answer from Gemini, with your current cellar included as context. Only
+  shown once `GEMINI_API_KEY` is set (see §6).
+- **Research all with AI** button on the library page: for each wine, asks
+  Gemini for its best estimate of rating, current market price, drinking
+  window, and tasting notes, then updates the wine. It never touches
+  `purchase_price` (what you actually paid) or your own `notes` — AI
+  results go into separate `estimated_price` / `tasting_profile` fields,
+  shown on the wine's detail page. Processes up to 15 wines per click
+  (click again for the rest, in a bigger cellar) since it's a handful of
+  sequential AI calls in one request, with no background job queue behind
+  it. A wine where Gemini's response doesn't parse is simply skipped, not
+  fatal to the rest of the batch.
+
+### Telegram bot
+
+Once configured (§7) and linked from `/account`, message the bot directly
+on Telegram:
+
+- `/window` — every bottle currently in its drinking window
+- `/add <name> | <producer> | <vintage> | <type> | <qty>` — add a bottle
+  (only name is required, e.g. `/add Opus One`)
+- `/notes <name or #id>` — that bottle's rating, tasting notes (AI and
+  your own), and recent tasting history
+- `/log <name or #id> | <score 1-100> | <notes>` — log a tasting; like the
+  web form, decrements the cellar quantity by one
+- `/link <code>`, `/unlink`, `/help` — connect/disconnect this chat, or
+  show the command list
+
+A text search (name or producer, case-insensitive) is used to find a
+bottle; if it matches more than one, the bot lists candidates with their
+`#id` so you can be specific on the next try.
+
+### Recipe Tracker (`/recipes`)
+
+- Save a recipe with a name, base servings, a list of ingredients
+  (quantity + unit + name), and numbered steps. Each user only sees their
+  own recipes.
+- The recipe detail page lets you rescale the whole ingredient list to any
+  number of servings (`?servings=N`, or the "Scale" form) — quantities are
+  recalculated proportionally, ingredients with no set quantity (e.g.
+  "salt to taste") are left as-is.
+- Add free-text comments to a recipe (e.g. "add more garlic next time").
+- **Add ingredients to grocery list** button on the detail page pushes
+  every ingredient (scaled to whatever serving count is currently shown)
+  onto the shared Grocery List below.
+
+### Grocery List (`/grocery`)
+
+- One list, shared by every signed-in user of the app (not per-user) — so
+  household members on separate accounts shop off the same list. Add an
+  item with a name and optional freeform quantity ("2 cups", "1 dozen"),
+  delete individual items, or hit **Clear list** to empty it in one click
+  after a shopping trip.
+
+## 1. Local setup
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+Fill in `.env`:
+
+- `SECRET_KEY` — generate with `python -c "import secrets; print(secrets.token_hex(32))"`.
+- `DATABASE_URL` — see the free database section below.
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — see §3. Optional.
+- `APPLE_CLIENT_ID` / `APPLE_TEAM_ID` / `APPLE_KEY_ID` / `APPLE_PRIVATE_KEY` — see §4. Optional.
+- `MAIL_SERVER` / `MAIL_USERNAME` / `MAIL_PASSWORD` (+ optional `MAIL_PORT` /
+  `MAIL_USE_TLS` / `MAIL_DEFAULT_SENDER`) — see §5. Optional; without it,
+  "forgot password" is unavailable but changing your password while
+  logged in still works.
+- `GEMINI_API_KEY` (+ optional `GEMINI_MODEL`) — see §6. Optional; without
+  it, the Wine Assistant chat and AI research button are just hidden.
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_WEBHOOK_SECRET` — see §7. Optional;
+  without both, the Telegram linking option on `/account` is hidden and
+  the webhook route 404s.
+
+Run migrations and start the dev server:
+
+```bash
+export FLASK_APP=wsgi.py
+flask db upgrade
+flask run
+```
+
+Visit http://localhost:5000. If Google/Apple credentials aren't set yet,
+`/login` still loads — the corresponding button is just shown disabled, so
+you can develop the rest of the app before OAuth is wired up.
+
+## 2. Free database
+
+Any managed Postgres works, since this is just Flask-SQLAlchemy +
+`DATABASE_URL`, but two good free options:
+
+- **[Neon](https://neon.tech)** (recommended) — free tier, serverless
+  Postgres, scales to zero. Pairs well with Cloud Run's scale-to-zero
+  behavior.
+- **[Supabase](https://supabase.com)** — free tier Postgres.
+
+Create a project on either, copy the connection string into `.env` as
+`DATABASE_URL` (Flask accepts either `postgres://` or `postgresql://`),
+then run `flask db upgrade`.
+
+## 3. Google OAuth setup
+
+This has to be done in your own Google account — there's no API for it, it's
+a few clicks in the console:
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+   (same project you used for Cloud Run/Neon, or a fresh one).
+2. If you haven't already, configure the **OAuth consent screen** first
+   (Console will prompt you): User type "External" is fine for personal use;
+   fill in an app name, your email as support/developer contact. Leave it in
+   "Testing" status — you don't need Google's review for personal use, you
+   just have to add your own Google account under **Test users** on that
+   screen, or sign-in will be rejected.
+3. Under **Credentials**, create an **OAuth client ID** (type: Web application).
+4. Authorized redirect URI — add both while developing:
+   - Local: `http://127.0.0.1:5000/login/google/callback`
+   - Production: `https://<your-cloud-run-url>/login/google/callback`
+5. Copy the Client ID/Secret into `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`
+   (in `.env` locally, and as the `google-client-id` / `google-client-secret`
+   Secret Manager secrets for Cloud Run — see §9).
+6. Restart the app (`flask run`) — the "Continue with Google" button on
+   `/login` goes from disabled to live as soon as both env vars are set;
+   nothing else in the code needs to change.
+
+## 4. Sign in with Apple setup
+
+Also has to be done in your own account, and requires an active
+[Apple Developer Program](https://developer.apple.com/programs/) membership
+($99/yr) — there's no free tier for this one.
+
+1. In [Certificates, Identifiers & Profiles](https://developer.apple.com/account/resources/identifiers/list),
+   create an **App ID** (or use an existing one) with the "Sign in with
+   Apple" capability turned on.
+2. Create a **Services ID** — this is your `APPLE_CLIENT_ID`. Under its
+   "Sign in with Apple" configuration, set the primary App ID from step 1,
+   and add a return URL: `https://<your-cloud-run-url>/login/apple/callback`
+   (Apple requires HTTPS and refuses `localhost`/`127.0.0.1`, so Apple login
+   can only be tested against a deployed URL or a tunnel like ngrok, never a
+   plain local dev server).
+3. Under **Keys**, create a new key with "Sign in with Apple" enabled,
+   associated with the App ID from step 1. Note its Key ID (`APPLE_KEY_ID`)
+   and your Team ID, shown at the top right of the developer portal
+   (`APPLE_TEAM_ID`). Download the `.p8` private key file **once** — Apple
+   won't let you download it again — and paste its full contents (including
+   the `-----BEGIN/END PRIVATE KEY-----` lines) into `APPLE_PRIVATE_KEY`.
+4. That's it — the app signs its own Apple client-secret JWT at startup
+   (see `_generate_apple_client_secret` in `app/auth.py`), so there's no
+   separate manual JWT-generation step, and no expiry to track (it's
+   re-signed fresh on every process start, well within Apple's 6-month cap).
+5. Until all four `APPLE_*` variables are set, the "Continue with Apple"
+   button on `/login` is shown disabled — Google login works independently
+   of Apple being configured, and vice versa.
+6. First-time sign-in quirk: Apple only ever sends the user's name once, on
+   the very first authorization for a given Apple ID — the app captures it
+   then (see the `apple_user` handling in `app/auth.py`); if you deny the
+   name/email prompt or it's a returning user, the account still gets
+   created, just without a name.
+
+## 5. Email setup (for password reset)
+
+Any SMTP account works — this uses Python's stdlib `smtplib`, no email
+service SDK required.
+
+1. Easiest option: a Gmail account with an
+   [app password](https://myaccount.google.com/apppasswords) (needs 2-step
+   verification turned on first). Set:
+   - `MAIL_SERVER=smtp.gmail.com`
+   - `MAIL_USERNAME` = your Gmail address
+   - `MAIL_PASSWORD` = the 16-character app password (not your normal
+     Google password)
+2. Or use a free tier from a transactional email service (Resend, Mailgun,
+   SendGrid, etc.) — same three variables, using the SMTP credentials they
+   give you.
+3. `MAIL_PORT` defaults to 587 (STARTTLS) and `MAIL_DEFAULT_SENDER`
+   defaults to `MAIL_USERNAME`; both only need setting if you want
+   something different.
+4. Once `MAIL_SERVER` / `MAIL_USERNAME` / `MAIL_PASSWORD` are all set, the
+   "Forgot password?" link on `/login` appears automatically. Until then,
+   the change-password form under `/account` (while logged in) is the
+   only way to change a password.
+5. A user needs an email on file for this to work — add one at `/account`.
+   `/register` doesn't collect one, to keep sign-up to two fields.
+
+## 6. Gemini setup (for the wine chat bot + AI research)
+
+1. Get a free API key at [Google AI Studio](https://aistudio.google.com/apikey)
+   (separate from Google Cloud / OAuth — no billing required for the free tier).
+2. Set `GEMINI_API_KEY` in `.env` (or as the `gemini-api-key` Secret Manager
+   secret for Cloud Run).
+3. That's it — "Ask the Wine Assistant" and "Research all with AI" both
+   appear on `/wines` automatically. The chat bot sends your current cellar
+   (names, vintages, types, quantities) along with your question as
+   context, so it can answer things like "what should I open tonight?"
+   using what's actually in your cellar. AI research asks Gemini, per
+   wine, for a rating/price/drinking-window/tasting-notes estimate,
+   constrained to a JSON response so it parses reliably.
+4. Optional: `GEMINI_MODEL` overrides the model used (default
+   `gemini-flash-latest`, Google's rolling alias for their latest Flash
+   model — fine for a personal project; pin an exact version if you want
+   stability guarantees instead).
+
+## 7. Telegram bot setup
+
+1. Message [@BotFather](https://t.me/BotFather) on Telegram, send
+   `/newbot`, and follow the prompts. You'll get back a token that looks
+   like `123456789:AAF...` — that's `TELEGRAM_BOT_TOKEN`.
+2. Make up `TELEGRAM_WEBHOOK_SECRET` — any random string, e.g.
+   `openssl rand -hex 24`. It's how the app verifies an incoming webhook
+   request actually came from Telegram, not just anyone who finds the URL.
+3. Set both in `.env` (or as the `telegram-bot-token` /
+   `telegram-webhook-secret` Secret Manager secrets for Cloud Run).
+4. **This one needs a real deployed HTTPS URL** — Telegram won't send
+   webhooks to `localhost`. After deploying (§9), point Telegram at it:
+   ```bash
+   TELEGRAM_BOT_TOKEN=... TELEGRAM_WEBHOOK_SECRET=... \
+   CLOUD_RUN_URL=https://your-app-url.a.run.app \
+     ./scripts/set_telegram_webhook.sh
+   ```
+5. Message your bot `/start` on Telegram, then sign in to ZB Hub, go to
+   `/account`, click **Get a link code**, and send `/link <code>` to the
+   bot within 10 minutes. From then on the bot commands (§ Telegram bot
+   above) operate on that account's cellar.
+6. If the bot token or webhook secret ever change, re-run
+   `set_telegram_webhook.sh` with the new values.
+
+## 8. Run with Docker
+
+```bash
+docker compose up --build
+```
+
+This starts a local Postgres container plus the app on
+http://localhost:3000. Fill in `.env` first (OAuth credentials,
+`SECRET_KEY`) — the compose file overrides `DATABASE_URL` to point at the
+bundled Postgres container automatically. Run migrations once against it:
+
+```bash
+docker compose exec web flask db upgrade
+```
+
+To use a hosted free database (Neon/Supabase) instead of the bundled
+container even during `docker compose`, remove the `db` service and the
+`DATABASE_URL` override under `web.environment` from `docker-compose.yml`
+so your `.env` value is used as-is.
+
+## 9. Deploy to Google Cloud Run
+
+### Recommended: one script, then GitHub does the rest
+
+Needs `gcloud` installed and `gcloud auth login` already done, a GCP
+project, this repo pushed to GitHub, and your Neon `DATABASE_URL` handy
+(you'll be prompted for it, input hidden):
+
+```bash
+PROJECT_ID=your-project REGION=us-central1 GITHUB_REPO=your-user/your-repo \
+  ./scripts/setup_gcp_ci.sh
+```
+
+This single script does the entire one-time GCP setup: enables the
+required APIs, creates the Artifact Registry repo, generates a
+`SECRET_KEY` and stores it plus your `DATABASE_URL` in Secret Manager,
+and creates a deploy service account with Workload Identity Federation
+scoped to your repo (so GitHub Actions can deploy without ever holding a
+long-lived GCP key). It's safe to re-run — existing resources are
+updated in place, not duplicated.
+
+It ends by printing exactly 6 values — add them as **GitHub repo secrets**
+(Settings -> Secrets and variables -> Actions -> New repository secret):
+`GCP_PROJECT_ID`, `GCP_REGION`, `GCP_SA_EMAIL`, `GCP_WIF_PROVIDER`,
+`SECRET_KEY`, `DATABASE_URL`.
+
+That's the whole setup. From then on, `.github/workflows/deploy.yml`
+handles everything on every push to `main`: it runs the test suite
+against a throwaway Postgres container, and — only if that passes —
+builds the image, runs `flask db upgrade` against your real Neon
+database, and deploys to Cloud Run. Pull requests only run the tests.
+Once it's deployed once, get the live URL with:
+
+```bash
+gcloud run services describe zb-hub --region us-central1 --format 'value(status.url)'
+```
+
+That URL is also what you'll open on your iPhone (see below), and what
+you'll eventually plug into the Google/Apple OAuth redirect URIs once
+those are configured.
+
+The script also creates empty placeholders for every optional feature's
+secrets (`google-client-id`, `google-client-secret`, `apple-client-id`,
+`apple-team-id`, `apple-key-id`, `apple-private-key`, `mail-server`,
+`mail-username`, `mail-password`, `gemini-api-key`, `telegram-bot-token`,
+`telegram-webhook-secret`) — `deploy.yml` references all of them
+unconditionally, and Cloud Run refuses to deploy if a referenced secret
+doesn't exist at all, even an empty one is fine. Fill any of them in
+later, for real, whenever you set that feature up:
+
+```bash
+printf '%s' 'the-real-value' | gcloud secrets versions add google-client-id --data-file=-
+```
+
+The next deploy picks it up automatically — no code or workflow changes
+needed (for Telegram specifically, also re-run `set_telegram_webhook.sh`
+per §7 once, after that deploy). Re-running `setup_gcp_ci.sh` never
+overwrites a secret that already has a real value, it only fills in
+placeholders that are still missing.
+
+### Alternative: one-off manual deploy
+
+If you'd rather deploy once by hand instead of wiring up the GitHub
+Actions pipeline (e.g. just to try it), skip the service-account/WIF
+parts of the script and run:
+
+```bash
+gcloud builds submit --tag gcr.io/PROJECT_ID/zb-hub
+gcloud run deploy zb-hub \
+  --image gcr.io/PROJECT_ID/zb-hub \
+  --platform managed \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --set-secrets SECRET_KEY=secret-key:latest,DATABASE_URL=database-url:latest
+```
+
+(add `,GOOGLE_CLIENT_ID=google-client-id:latest,...` etc. for whichever
+of the optional secrets you've actually filled in — unlike the GitHub
+Actions path, a manual deploy only needs to reference secrets you want,
+so there's no need for placeholders here).
+
+Notes:
+
+- Cloud Run injects `PORT` automatically; gunicorn in the Dockerfile binds
+  to it already.
+- Both Cloud Run and Neon's free tiers scale to zero, so this whole stack
+  can run at $0 for low-traffic personal use — Cloud Run's free tier
+  covers a generous number of requests/month, and Cloud Build has a free
+  monthly quota for image builds.
+
+## Viewing it on your iPhone
+
+Once it's deployed to Cloud Run (above), the service URL is a normal
+public HTTPS address — open it in Safari on your iPhone like any other
+site, no extra setup needed. This is also the easiest way to test Apple
+Sign In, since Apple refuses to redirect to `localhost`.
+
+Before deploying, you can still preview it from your phone if it's on the
+same Wi-Fi as the computer running the app:
+
+```bash
+flask run --host 0.0.0.0
+```
+
+then visit `http://<your-computer's-LAN-IP>:5000` in Safari (find the IP
+with `ipconfig getifaddr en0` on a Mac). Google/Apple sign-in won't work
+over plain `http://`, but the welcome page and (once you're logged in via
+a proper deploy) the Wine Library pages will.
+
+## Adding more projects to the hub
+
+Each project is just another blueprint. Register it in `app/__init__.py`
+and add an entry to the `PROJECTS` list in `app/main.py` so it shows up
+on `/`. Two patterns to copy from:
+
+- **Per-user data** (most things): see `app/wines.py` or `app/recipes.py`
+  — a `Blueprint`, its own models with a `user_id` foreign key, and CRUD
+  routes that check `current_user.id` before returning or modifying a row.
+- **Shared data**, visible to every account in the app: see
+  `app/grocery.py` — no `user_id` scoping on reads, just `@login_required`
+  to keep it behind sign-in.

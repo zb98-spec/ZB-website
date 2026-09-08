@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Wine Assistant</h1>
+<p class="muted">Ask about pairings, what to open tonight, or anything else - it can see what's in your cellar.</p>
+
+<form method="post" class="wine-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label>Your question
+    <textarea name="question" rows="2" required>{{ question }}</textarea>
+  </label>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Ask</button>
+  </div>
+</form>
+
+{% if answer %}
+  <h2>Answer</h2>
+  <p style="white-space: pre-wrap;">{{ answer }}</p>
+{% endif %}
+{% endblock %}

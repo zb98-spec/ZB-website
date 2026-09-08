@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="auth-card">
+  <h1>Welcome to ZB Hub</h1>
+  <p class="muted">Sign in to get to your projects.</p>
+
+  <form method="post" action="{{ url_for('auth.login_password') }}" class="wine-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Username
+      <input type="text" name="username" required autofocus>
+    </label>
+    <label>Password
+      <input type="password" name="password" required>
+    </label>
+    <button type="submit" class="btn btn-primary">Sign in</button>
+  </form>
+  <p class="muted">
+    New here? <a href="{{ url_for('auth.register') }}">Create an account</a>
+    {% if mail_enabled %}&middot; <a href="{{ url_for('auth.forgot_password') }}">Forgot password?</a>{% endif %}
+  </p>
+
+  <p class="muted" style="margin-top: 1.5rem;">Or continue with</p>
+  <div class="auth-buttons">
+    {% if google_enabled %}
+      <a class="btn" href="{{ url_for('auth.login_redirect', provider='google') }}">Continue with Google</a>
+    {% else %}
+      <button class="btn" disabled title="Set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET">
+        Google sign-in not configured
+      </button>
+    {% endif %}
+
+    {% if apple_enabled %}
+      <a class="btn" href="{{ url_for('auth.login_redirect', provider='apple') }}">Continue with Apple</a>
+    {% else %}
+      <button class="btn" disabled title="Set APPLE_CLIENT_ID / APPLE_TEAM_ID / APPLE_KEY_ID / APPLE_PRIVATE_KEY">
+        Apple sign-in not configured
+      </button>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
