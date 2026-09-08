@@ -32,85 +32,149 @@ def _logged_in_client(app):
     return client
 
 
-def test_research_all_redirects_when_not_configured():
+def _wine_id(app, name):
+    with app.app_context():
+        return Wine.query.filter_by(name=name).one().id
+
+
+FAKE_RESULT = {
+    "rating": 92,
+    "estimated_price": 45.5,
+    "drink_from": 2024,
+    "drink_by": 2030,
+    "tasting_notes": "Notes of cherry and oak.",
+}
+
+
+def test_preview_redirects_when_not_configured():
     app = _app()
     client = _logged_in_client(app)
-    client.post("/wines/new", data={"name": "Test Wine", "quantity": "1"}, follow_redirects=True)
+    client.post("/wines/new", data={"name": "Preview Wine", "quantity": "1"}, follow_redirects=True)
+    wine_id = _wine_id(app, "Preview Wine")
 
-    resp = client.post("/wines/research-all", follow_redirects=True)
+    resp = client.post("/wines/research/preview", data={"wine_ids[]": [str(wine_id)]}, follow_redirects=True)
     assert b"isn&#39;t configured yet" in resp.data
 
 
-def test_research_all_updates_wine_fields():
+def test_preview_requires_a_selection():
     app = _app()
     client = _logged_in_client(app)
-    client.post("/wines/new", data={"name": "Researchable Wine", "quantity": "1"}, follow_redirects=True)
+    os.environ["GEMINI_API_KEY"] = "fake-key-for-test"
+    try:
+        resp = client.post("/wines/research/preview", data={}, follow_redirects=True)
+        assert b"Select at least one wine" in resp.data
+    finally:
+        os.environ.pop("GEMINI_API_KEY", None)
 
-    fake_result = {
-        "rating": 92,
-        "estimated_price": 45.5,
-        "drink_from": 2024,
-        "drink_by": 2030,
-        "tasting_notes": "Notes of cherry and oak.",
-    }
+
+def test_preview_shows_old_vs_new_without_writing_to_db():
+    app = _app()
+    client = _logged_in_client(app)
+    client.post("/wines/new", data={"name": "Preview Only Wine", "quantity": "1"}, follow_redirects=True)
+    wine_id = _wine_id(app, "Preview Only Wine")
 
     os.environ["GEMINI_API_KEY"] = "fake-key-for-test"
     try:
-        with patch("app.wines.ask_gemini_json", return_value=fake_result) as mocked:
-            resp = client.post("/wines/research-all", follow_redirects=True)
-        assert mocked.called
-        assert b"Researched 1 wine" in resp.data
+        with patch("app.wines.ask_gemini_json", return_value=FAKE_RESULT):
+            resp = client.post(
+                "/wines/research/preview", data={"wine_ids[]": [str(wine_id)]}, follow_redirects=True
+            )
+        assert b"Review AI research" in resp.data
+        assert b"92" in resp.data  # proposed rating shown
+        assert b"Notes of cherry and oak." in resp.data
 
+        # nothing should be written to the DB yet - this is only a preview
         with app.app_context():
-            wine = Wine.query.filter_by(name="Researchable Wine").one()
-            assert wine.rating == 92
-            assert float(wine.estimated_price) == 45.5
-            assert wine.drink_from == 2024
-            assert wine.drink_by == 2030
-            assert wine.tasting_profile == "Notes of cherry and oak."
-            assert wine.researched_at is not None
+            wine = db.session.get(Wine, wine_id)
+            assert wine.rating is None
+            assert wine.researched_at is None
     finally:
         os.environ.pop("GEMINI_API_KEY", None)
 
 
-def test_research_all_counts_failures_without_crashing():
+def test_apply_writes_only_checked_wines():
     app = _app()
     client = _logged_in_client(app)
-    client.post("/wines/new", data={"name": "Failing Wine", "quantity": "1"}, follow_redirects=True)
+    client.post("/wines/new", data={"name": "Accepted Wine", "quantity": "1"}, follow_redirects=True)
+    client.post("/wines/new", data={"name": "Rejected Wine", "quantity": "1"}, follow_redirects=True)
+    accepted_id = _wine_id(app, "Accepted Wine")
+    rejected_id = _wine_id(app, "Rejected Wine")
 
-    os.environ["GEMINI_API_KEY"] = "fake-key-for-test"
-    try:
-        with patch("app.wines.ask_gemini_json", side_effect=RuntimeError("boom")):
-            resp = client.post("/wines/research-all", follow_redirects=True)
-        assert resp.status_code == 200
-        assert b"Researched 0 wines" in resp.data
-        assert b"1 failed" in resp.data
-    finally:
-        os.environ.pop("GEMINI_API_KEY", None)
+    # Simulates submitting the review form with only "Accepted Wine" checked -
+    # "Rejected Wine" simply isn't in accept_wine_ids[], same as an unchecked box.
+    resp = client.post(
+        "/wines/research/apply",
+        data={
+            "accept_wine_ids[]": [str(accepted_id)],
+            f"rating_{accepted_id}": "92",
+            f"price_{accepted_id}": "45.5",
+            f"drink_from_{accepted_id}": "2024",
+            f"drink_by_{accepted_id}": "2030",
+            f"notes_{accepted_id}": "Notes of cherry and oak.",
+        },
+        follow_redirects=True,
+    )
+    assert b"Updated 1 wine" in resp.data
+
+    with app.app_context():
+        accepted = db.session.get(Wine, accepted_id)
+        assert accepted.rating == 92
+        assert float(accepted.estimated_price) == 45.5
+        assert accepted.tasting_profile == "Notes of cherry and oak."
+        assert accepted.researched_at is not None
+
+        rejected = db.session.get(Wine, rejected_id)
+        assert rejected.rating is None
+        assert rejected.researched_at is None
 
 
-def test_research_all_ignores_out_of_range_rating():
+def test_apply_with_nothing_checked_changes_nothing():
+    app = _app()
+    client = _logged_in_client(app)
+    resp = client.post("/wines/research/apply", data={}, follow_redirects=True)
+    assert b"No changes applied" in resp.data
+
+
+def test_apply_ignores_out_of_range_values():
     app = _app()
     client = _logged_in_client(app)
     client.post("/wines/new", data={"name": "Bad Data Wine", "quantity": "1"}, follow_redirects=True)
+    wine_id = _wine_id(app, "Bad Data Wine")
 
-    fake_result = {
-        "rating": 500,  # out of 1-100 range - should be rejected, not stored
-        "estimated_price": -10,  # negative - should be rejected
-        "drink_from": 2030,
-        "drink_by": 2020,  # from > by - should be rejected as a pair
-        "tasting_notes": "Fine.",
-    }
+    client.post(
+        "/wines/research/apply",
+        data={
+            "accept_wine_ids[]": [str(wine_id)],
+            f"rating_{wine_id}": "500",  # out of 1-100 range
+            f"price_{wine_id}": "-10",  # negative
+            f"drink_from_{wine_id}": "2030",
+            f"drink_by_{wine_id}": "2020",  # from > by
+            f"notes_{wine_id}": "Fine.",
+        },
+        follow_redirects=True,
+    )
 
-    os.environ["GEMINI_API_KEY"] = "fake-key-for-test"
-    try:
-        with patch("app.wines.ask_gemini_json", return_value=fake_result):
-            client.post("/wines/research-all", follow_redirects=True)
-        with app.app_context():
-            wine = Wine.query.filter_by(name="Bad Data Wine").one()
-            assert wine.rating is None
-            assert wine.estimated_price is None
-            assert wine.drink_from is None and wine.drink_by is None
-            assert wine.tasting_profile == "Fine."  # the one valid field is still saved
-    finally:
-        os.environ.pop("GEMINI_API_KEY", None)
+    with app.app_context():
+        wine = db.session.get(Wine, wine_id)
+        assert wine.rating is None
+        assert wine.estimated_price is None
+        assert wine.drink_from is None and wine.drink_by is None
+        assert wine.tasting_profile == "Fine."  # the one valid field is still saved
+
+
+def test_apply_cannot_touch_another_users_wine():
+    app = _app()
+    owner = _logged_in_client(app)
+    owner.post("/wines/new", data={"name": "Someone Elses Wine", "quantity": "1"}, follow_redirects=True)
+    wine_id = _wine_id(app, "Someone Elses Wine")
+
+    attacker = _logged_in_client(app)
+    attacker.post(
+        "/wines/research/apply",
+        data={"accept_wine_ids[]": [str(wine_id)], f"rating_{wine_id}": "99"},
+        follow_redirects=True,
+    )
+
+    with app.app_context():
+        wine = db.session.get(Wine, wine_id)
+        assert wine.rating is None  # untouched

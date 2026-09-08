@@ -198,68 +198,132 @@ def _research_prompt(wine: Wine) -> str:
     )
 
 
-def _apply_research(wine: Wine, data: dict) -> None:
-    rating = data.get("rating")
-    if isinstance(rating, (int, float)) and 1 <= rating <= 100:
-        wine.rating = int(rating)
+def _validate_research_data(data: dict) -> dict:
+    """Cleans a raw {rating, estimated_price, drink_from, drink_by,
+    tasting_notes} dict - from Gemini's JSON, or from the review page's
+    hidden form fields (so the same validation runs whether the values just
+    came out of the model or are being re-submitted for real). Any field
+    that's missing or out of range comes back as None rather than raising,
+    so one bad field doesn't sink the rest."""
+    cleaned = {"rating": None, "estimated_price": None, "drink_from": None, "drink_by": None, "tasting_notes": None}
 
-    price = data.get("estimated_price")
-    if isinstance(price, (int, float)) and price >= 0:
-        wine.estimated_price = Decimal(str(round(float(price), 2)))
+    try:
+        rating = int(data.get("rating"))
+        if 1 <= rating <= 100:
+            cleaned["rating"] = rating
+    except (TypeError, ValueError):
+        pass
 
-    drink_from, drink_by = data.get("drink_from"), data.get("drink_by")
-    if (
-        isinstance(drink_from, (int, float))
-        and isinstance(drink_by, (int, float))
-        and drink_from <= drink_by
-    ):
-        wine.drink_from = int(drink_from)
-        wine.drink_by = int(drink_by)
+    try:
+        price = float(data.get("estimated_price"))
+        if price >= 0:
+            cleaned["estimated_price"] = Decimal(str(round(price, 2)))
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        drink_from = int(data.get("drink_from"))
+        drink_by = int(data.get("drink_by"))
+        if drink_from <= drink_by:
+            cleaned["drink_from"] = drink_from
+            cleaned["drink_by"] = drink_by
+    except (TypeError, ValueError):
+        pass
 
     notes = data.get("tasting_notes")
     if isinstance(notes, str) and notes.strip():
-        wine.tasting_profile = notes.strip()
+        cleaned["tasting_notes"] = notes.strip()
 
+    return cleaned
+
+
+def _apply_validated_research(wine: Wine, cleaned: dict) -> None:
+    if cleaned["rating"] is not None:
+        wine.rating = cleaned["rating"]
+    if cleaned["estimated_price"] is not None:
+        wine.estimated_price = cleaned["estimated_price"]
+    if cleaned["drink_from"] is not None:
+        wine.drink_from = cleaned["drink_from"]
+        wine.drink_by = cleaned["drink_by"]
+    if cleaned["tasting_notes"] is not None:
+        wine.tasting_profile = cleaned["tasting_notes"]
     wine.researched_at = datetime.utcnow()
 
 
-@wines_bp.route("/research-all", methods=["POST"])
+@wines_bp.route("/research/preview", methods=["POST"])
 @login_required
-def research_all():
+def research_preview():
     if not gemini_enabled():
         flash("AI research isn't configured yet.")
         return redirect(url_for("wines.list_wines"))
 
+    wine_ids = request.form.getlist("wine_ids[]")
+    if not wine_ids:
+        flash("Select at least one wine to research.")
+        return redirect(url_for("wines.list_wines"))
+
     candidates = (
-        Wine.query.filter_by(user_id=current_user.id)
+        Wine.query.filter(Wine.id.in_(wine_ids), Wine.user_id == current_user.id)
         .order_by(Wine.id)
-        .limit(RESEARCH_BATCH_LIMIT + 1)
         .all()
     )
     if not candidates:
-        flash("No wines to research yet.")
+        flash("Select at least one wine to research.")
         return redirect(url_for("wines.list_wines"))
 
     more_remaining = len(candidates) > RESEARCH_BATCH_LIMIT
     batch = candidates[:RESEARCH_BATCH_LIMIT]
 
-    succeeded = failed = 0
+    proposals = []
+    failed = 0
     for wine in batch:
         try:
             data = ask_gemini_json(_research_prompt(wine), RESEARCH_SCHEMA)
-            _apply_research(wine, data)
-            succeeded += 1
         except RuntimeError:
             failed += 1
+            continue
+        cleaned = _validate_research_data(data)
+        if not any(cleaned.values()):
+            failed += 1
+            continue
+        proposals.append({"wine": wine, "new": cleaned})
+
+    if not proposals:
+        flash(f"Couldn't get usable research for any of the selected wines ({failed} failed).")
+        return redirect(url_for("wines.list_wines"))
+
+    return render_template(
+        "wines/research_review.html", proposals=proposals, failed=failed, more_remaining=more_remaining,
+    )
+
+
+@wines_bp.route("/research/apply", methods=["POST"])
+@login_required
+def research_apply():
+    accepted_ids = request.form.getlist("accept_wine_ids[]")
+    if not accepted_ids:
+        flash("No changes applied - nothing was checked.")
+        return redirect(url_for("wines.list_wines"))
+
+    updated = 0
+    for wine_id in accepted_ids:
+        wine = db.session.get(Wine, int(wine_id))
+        if wine is None or wine.user_id != current_user.id:
+            continue
+        cleaned = _validate_research_data(
+            {
+                "rating": request.form.get(f"rating_{wine_id}"),
+                "estimated_price": request.form.get(f"price_{wine_id}"),
+                "drink_from": request.form.get(f"drink_from_{wine_id}"),
+                "drink_by": request.form.get(f"drink_by_{wine_id}"),
+                "tasting_notes": request.form.get(f"notes_{wine_id}"),
+            }
+        )
+        _apply_validated_research(wine, cleaned)
+        updated += 1
 
     db.session.commit()
-
-    message = f"Researched {succeeded} wine{'s' if succeeded != 1 else ''}."
-    if failed:
-        message += f" {failed} failed."
-    if more_remaining:
-        message += " Click again to research the rest."
-    flash(message)
+    flash(f"Updated {updated} wine{'s' if updated != 1 else ''}." if updated else "No changes applied.")
     return redirect(url_for("wines.list_wines"))
 
 

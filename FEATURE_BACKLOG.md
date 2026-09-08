@@ -21,7 +21,7 @@ waiting on the values.
   logged in still works). See README §5.
 - [ ] **Gemini API key** — free key at aistudio.google.com/apikey
   (`GEMINI_API_KEY`). Powers both the Wine Assistant chat bot and the
-  "Research all with AI" button; without it, both stay hidden.
+  "Research checked with AI" button; without it, both stay hidden.
   See README §6.
 - [ ] **Telegram bot token + webhook secret** — create a bot via
   @BotFather for `TELEGRAM_BOT_TOKEN`; make up any random string for
@@ -59,7 +59,7 @@ aren't needed yet.
 - [ ] **Recipe ingredient parsing from pasted text** — right now each
   ingredient is entered into its own quantity/unit/name fields; pasting
   a whole ingredient list and auto-splitting it would be faster to use.
-- [ ] **AI research background job** — the "Research all with AI" button
+- [ ] **AI research background job** — the "Research checked with AI" button
   processes up to 15 wines synchronously in one request (no job queue
   exists yet); fine for a personal cellar, would need rework for a much
   larger one or to remove the 15-per-click cap.

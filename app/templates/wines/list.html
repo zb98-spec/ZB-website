@@ -7,21 +7,27 @@
     {% if ai_enabled %}
       <a class="btn btn-ghost" href="{{ url_for('wines.chat') }}">Ask the Wine Assistant</a>
       {% if wines %}
-        <form action="{{ url_for('wines.research_all') }}" method="post" class="inline-form">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-ghost">Research all with AI</button>
-        </form>
+        <button type="submit" form="research-form" class="btn btn-ghost">Research checked with AI</button>
       {% endif %}
     {% endif %}
     <a class="btn btn-primary" href="{{ url_for('wines.new_wine') }}">+ Add wine</a>
   </div>
 </div>
 
+{% if ai_enabled and wines %}
+  <!-- Empty on purpose: row checkboxes below reference this by id (the
+       "form" attribute), since they live inside per-row <td> cells that
+       already contain their own Edit/Delete forms, and forms can't nest. -->
+  <form id="research-form" action="{{ url_for('wines.research_preview') }}" method="post"></form>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" form="research-form">
+{% endif %}
+
 {% if wines %}
   <div class="table-wrap">
     <table class="wine-table">
       <thead>
         <tr>
+          {% if ai_enabled %}<th></th>{% endif %}
           <th>Wine</th>
           <th>Vintage</th>
           <th>Type</th>
@@ -35,6 +41,9 @@
       <tbody>
         {% for wine in wines %}
         <tr>
+          {% if ai_enabled %}
+            <td><input type="checkbox" name="wine_ids[]" value="{{ wine.id }}" form="research-form"></td>
+          {% endif %}
           <td>
             <a href="{{ url_for('wines.wine_detail', wine_id=wine.id) }}"><strong>{{ wine.name }}</strong></a>
             {% if wine.producer %}<br><span class="muted">{{ wine.producer }}</span>{% endif %}

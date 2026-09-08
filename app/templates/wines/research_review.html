@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Review AI research</h1>
+<p class="muted">
+  {{ proposals|length }} wine{{ "s" if proposals|length != 1 else "" }} researched
+  {%- if failed %}, {{ failed }} failed and aren't shown{% endif %}.
+  {% if more_remaining %}You selected more than {{ 15 }} - only the first 15 were researched; select the rest and try again.{% endif %}
+  Uncheck anything you don't want to keep, then apply.
+</p>
+
+<form method="post" action="{{ url_for('wines.research_apply') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  {% for item in proposals %}
+    {% set wine = item.wine %}
+    {% set new = item.new %}
+    <div class="research-card">
+      <label class="checkbox-row">
+        <input type="checkbox" name="accept_wine_ids[]" value="{{ wine.id }}" checked>
+        <strong>{{ wine.name }}</strong> ({{ wine.vintage or "NV" }})
+      </label>
+      <input type="hidden" name="rating_{{ wine.id }}" value="{{ new.rating if new.rating is not none else '' }}">
+      <input type="hidden" name="price_{{ wine.id }}" value="{{ new.estimated_price if new.estimated_price is not none else '' }}">
+      <input type="hidden" name="drink_from_{{ wine.id }}" value="{{ new.drink_from if new.drink_from is not none else '' }}">
+      <input type="hidden" name="drink_by_{{ wine.id }}" value="{{ new.drink_by if new.drink_by is not none else '' }}">
+      <input type="hidden" name="notes_{{ wine.id }}" value="{{ new.tasting_notes if new.tasting_notes is not none else '' }}">
+
+      <div class="table-wrap">
+        <table class="wine-table">
+          <thead><tr><th></th><th>Current</th><th>Proposed</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Rating</td>
+              <td>{{ wine.rating or "—" }}</td>
+              <td>{{ new.rating or "—" }}</td>
+            </tr>
+            <tr>
+              <td>Estimated price</td>
+              <td>{{ "$%.2f"|format(wine.estimated_price) if wine.estimated_price else "—" }}</td>
+              <td>{{ "$%.2f"|format(new.estimated_price) if new.estimated_price else "—" }}</td>
+            </tr>
+            <tr>
+              <td>Drink window</td>
+              <td>{% if wine.drink_from or wine.drink_by %}{{ wine.drink_from or "?" }}&ndash;{{ wine.drink_by or "?" }}{% else %}—{% endif %}</td>
+              <td>{% if new.drink_from or new.drink_by %}{{ new.drink_from or "?" }}&ndash;{{ new.drink_by or "?" }}{% else %}—{% endif %}</td>
+            </tr>
+            <tr>
+              <td>Tasting notes</td>
+              <td style="white-space: normal;">{{ wine.tasting_profile or "—" }}</td>
+              <td style="white-space: normal;">{{ new.tasting_notes or "—" }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% endfor %}
+
+  <div class="form-actions">
+    <a class="btn btn-ghost" href="{{ url_for('wines.list_wines') }}">Cancel, apply nothing</a>
+    <button type="submit" class="btn btn-primary">Apply checked changes</button>
+  </div>
+</form>
+{% endblock %}

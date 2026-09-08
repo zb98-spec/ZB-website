@@ -74,16 +74,21 @@ migrations/       Alembic migrations (flask db migrate/upgrade)
 - `/wines/chat` — **Wine Assistant**: ask a free-text question and get an
   answer from Gemini, with your current cellar included as context. Only
   shown once `GEMINI_API_KEY` is set (see §6).
-- **Research all with AI** button on the library page: for each wine, asks
-  Gemini for its best estimate of rating, current market price, drinking
-  window, and tasting notes, then updates the wine. It never touches
+- **Research checked with AI**: check the box next to any wines on the
+  library page and click this to ask Gemini, per wine, for its best
+  estimate of rating, current market price, drinking window, and tasting
+  notes. Nothing is written to the database yet at this point — it opens
+  a review page showing each wine's current vs. proposed values side by
+  side, with a checkbox (checked by default) per wine; uncheck any you
+  don't want and click **Apply checked changes** to actually save them,
+  or **Cancel** to discard the whole batch. It never touches
   `purchase_price` (what you actually paid) or your own `notes` — AI
   results go into separate `estimated_price` / `tasting_profile` fields,
   shown on the wine's detail page. Processes up to 15 wines per click
-  (click again for the rest, in a bigger cellar) since it's a handful of
-  sequential AI calls in one request, with no background job queue behind
-  it. A wine where Gemini's response doesn't parse is simply skipped, not
-  fatal to the rest of the batch.
+  (select the rest and try again, in a bigger cellar) since it's a
+  handful of sequential AI calls in one request, with no background job
+  queue behind it. A wine where Gemini's response doesn't parse is
+  simply left out of the review, not fatal to the rest of the batch.
 
 ### Telegram bot
 
@@ -266,12 +271,13 @@ service SDK required.
    (separate from Google Cloud / OAuth — no billing required for the free tier).
 2. Set `GEMINI_API_KEY` in `.env` (or as the `gemini-api-key` Secret Manager
    secret for Cloud Run).
-3. That's it — "Ask the Wine Assistant" and "Research all with AI" both
-   appear on `/wines` automatically. The chat bot sends your current cellar
-   (names, vintages, types, quantities) along with your question as
-   context, so it can answer things like "what should I open tonight?"
-   using what's actually in your cellar. AI research asks Gemini, per
-   wine, for a rating/price/drinking-window/tasting-notes estimate,
+3. That's it — "Ask the Wine Assistant" and per-wine checkboxes +
+   "Research checked with AI" both appear on `/wines` automatically. The
+   chat bot sends your current cellar (names, vintages, types, quantities)
+   along with your question as context, so it can answer things like
+   "what should I open tonight?" using what's actually in your cellar. AI
+   research asks Gemini, per selected wine, for a
+   rating/price/drinking-window/tasting-notes estimate,
    constrained to a JSON response so it parses reliably.
 4. Optional: `GEMINI_MODEL` overrides the model used (default
    `gemini-flash-latest`, Google's rolling alias for their latest Flash

@@ -242,6 +242,7 @@ a {
 }
 
 .checkbox-row {
+  display: flex;
   flex-direction: row !important;
   align-items: center;
   gap: 0.5rem !important;
@@ -249,6 +250,16 @@ a {
 
 .checkbox-row input {
   width: auto;
+}
+
+.research-card {
+  border: 1px solid var(--border);
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.research-card .checkbox-row {
+  margin-bottom: 0.75rem;
 }
 
 .form-actions {
