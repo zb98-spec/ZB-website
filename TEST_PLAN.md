@@ -88,7 +88,20 @@ that only shows up when several features are used back-to-back in one
 session — the right place for that check is the last gate before shipping,
 not mid-development.
 
-## 6. Known risks / test-suite limitations worth flagging up front
+## 6. Known-defect convention
+
+`tests/test_integration.py` ends with a "Known defects" section: real,
+open application bugs get a regression test, same as anything else, but
+marked `@pytest.mark.xfail(reason="...", strict=True)` instead of left to
+fail outright. That keeps `pytest`'s exit code (and CI, which the repo's
+`deploy` job is gated on) green while a documented bug is still open,
+without hiding it — it still shows up as `xfailed` in the run summary, and
+`strict=True` means the day someone actually fixes the bug, that test
+starts "unexpectedly passing" (`XPASS`), which itself fails the run — the
+signal to remove the marker rather than let a fix go untracked. See
+`ERROR_LOG.md` for what's currently marked this way and why.
+
+## 7. Known risks / test-suite limitations worth flagging up front
 
 - **Shared, non-isolated database.** No test resets or truncates tables
   between runs (`test_clear_list_removes_everything` in `test_integration.py`

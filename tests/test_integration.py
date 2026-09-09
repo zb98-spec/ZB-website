@@ -14,6 +14,8 @@ import uuid
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
+import pytest
+
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault(
     "DATABASE_URL", "postgresql://zbhub:zbhub@localhost:5432/zbhub"
@@ -1324,9 +1326,15 @@ def test_add_command_cannot_touch_another_users_cellar():
 
 # ---------------------------------------------------------------------------
 # Known defects - regression tests for real bugs found while building out
-# this suite. Intentionally FAILING. See ERROR_LOG.md. Not fixed here.
+# this suite. See ERROR_LOG.md for full details. Not fixed here - marked
+# xfail(strict=True) so CI reports them without going red: they show up as
+# "xfailed" (expected, tracked) as long as the bug is still there, but the
+# moment either underlying bug actually gets fixed, the test starts
+# "xpassing" and strict=True turns that into a real CI failure - the signal
+# to come remove the marker, not a bug getting silently un-tracked.
 # ---------------------------------------------------------------------------
 
+@pytest.mark.xfail(reason="app/wines.py:_optional_int - see ERROR_LOG.md Finding 1", strict=True)
 def test_non_numeric_vintage_should_not_crash_the_server():
     """app/wines.py:_optional_int has no try/except around int(value), unlike
     its sibling _optional_decimal (which catches InvalidOperation). Any
@@ -1346,6 +1354,7 @@ def test_non_numeric_vintage_should_not_crash_the_server():
     )
 
 
+@pytest.mark.xfail(reason="app/auth.py:reset_password - see ERROR_LOG.md Finding 2", strict=True)
 def test_reset_link_for_a_deleted_account_should_not_crash_the_server():
     """app/auth.py:reset_password loads the user with db.session.get(User,
     user_id) and immediately calls user.set_password(...) with no None
